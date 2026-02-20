@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+import os
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
@@ -25,42 +26,52 @@ class GaussianModelling:
         bg_model_count = int(self.dataloader.frame_count * 0.25)
                 
         first_img = self.dataloader.image(0)
-        imgs_differences = np.empty((bg_model_count - 1, *first_img.shape), dtype=first_img.dtype)
+        bg_frames = np.empty((bg_model_count, *first_img.shape), dtype=first_img.dtype)
         
-        prev_img = first_img
-        for i in tqdm(range(1, bg_model_count), 'Computing background model parameters'):
-            curr_img = self.dataloader.image(i)
-            imgs_differences[i - 1] = np.abs(curr_img.astype(np.int16) - prev_img.astype(np.int16)).astype(np.uint8)
-            prev_img = curr_img
+        for i in tqdm(range(bg_model_count), 'Computing background model parameters'):
+            bg_frames[i] = self.dataloader.image(i)
         
-        self.pixelwise_mean = np.mean(imgs_differences, axis=0)
-        self.pixelwise_variance = np.var(imgs_differences, axis=0)
+        self.pixelwise_mean = np.mean(bg_frames, axis=0)
+        self.pixelwise_std = np.std(bg_frames, axis=0)
     
-    def compute_bg_mask(self, image_idx: int, k=2.5):
+    def compute_bg_mask(self, image_idx: int, k=1):
         image = self.dataloader.image(image_idx).astype(np.float64)
-        threshold = k * np.sqrt(self.pixelwise_variance)
-        mask = np.abs(image - self.pixelwise_mean) <= threshold
+        threshold = k * (self.pixelwise_std + 2)
+        mask = np.abs(image - self.pixelwise_mean) >= threshold
         return mask.astype(np.uint8) * 255
         
+
+def detect_bboxes_in_frame(image: np.ndarray):
+    print(image)
+    
 
 
 dataloader = AICityFrames(scale=0.3)
 
-gm = GaussianModelling(dataloader)
 
-# Create video writer
-output_path = Path(__file__).parent / "bg_mask_output.mp4"
-h, w = dataloader.image(0).shape
-fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-out = cv2.VideoWriter(str(output_path), fourcc, 10, (w, h))
+MASK_FRAMES_PATH = Path("mask_frames")
 
-print(f"Total frames: {dataloader.frame_count}")
+#if not MASK_FRAMES_PATH.exists() or False:
+if True:
+    MASK_FRAMES_PATH.mkdir(parents=True, exist_ok=True)
 
-# Process all frames
-for frame_idx in tqdm(range(int(dataloader.frame_count * 0.25), dataloader.frame_count - 1), 'Processing frames'):
-    mask = gm.compute_bg_mask(image_idx=frame_idx)
-    mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-    out.write(mask_bgr)
+    gm = GaussianModelling(dataloader)
 
-out.release()
-print(f"Saved video to {output_path}")
+    # Create video writer
+    output_path = Path(__file__).parent / "bg_mask_output.mp4"
+    h, w = dataloader.image(0).shape
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(str(output_path), fourcc, 10, (w, h))
+
+    print(f"Total frames: {dataloader.frame_count}")
+
+    # Process all frames
+    for frame_idx in tqdm(range(int(dataloader.frame_count * 0.25), dataloader.frame_count - 1), 'Processing frames'):
+        mask = gm.compute_bg_mask(frame_idx, 1)
+        mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+        out.write(mask_bgr)
+        cv2.imwrite(MASK_FRAMES_PATH / f"mask{ frame_idx:06d}.jpg", mask_bgr)
+
+    out.release()
+    print(f"Saved video to {output_path}")
+
