@@ -1,0 +1,10 @@
+venv
+data
+__pycache__
+parsed_data
+*.mp4
+*.png
+*.jpeg
+*.jpg
+
+.DS_Store
