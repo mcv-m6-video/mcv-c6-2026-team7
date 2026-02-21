@@ -11,6 +11,25 @@ from tqdm import tqdm
 from metrics import compute_map, compute_iou
 
 
+# Scale factor for resizing input frames (to speed up experiments)
+SCALE = 0.5
+
+# Tunable parameters
+ALPHA = 6                        # Background subtraction threshold multiplier
+MORPH_KERNEL_SIZE = (3, 3)       # Kernel size for morphological ops (at scale 1)
+MIN_AREA = 300                   # Minimum contour area to keep a bounding box (at scale 1)
+MAX_ASPECT_RATIO = 5.0           # Maximum aspect ratio (max/min side) for a bbox
+MERGE_IOU_THRESHOLD = 0.3        # IoU threshold to merge overlapping boxes
+MERGE_DISTANCE_THRESHOLD = 50.0  # Pixel distance threshold to merge nearby boxes (at scale 1)
+
+# Scale-adjusted parameters
+_ks = max(1, int(MORPH_KERNEL_SIZE[0] * SCALE))
+_ks = _ks if _ks % 2 == 1 else _ks + 1  # keep odd for morphological kernels
+MORPH_KERNEL_SIZE_SCALED = (_ks, _ks)
+MIN_AREA_SCALED = MIN_AREA * (SCALE ** 2)
+MERGE_DISTANCE_THRESHOLD_SCALED = MERGE_DISTANCE_THRESHOLD * SCALE
+
+
 class GaussianModelling:
     
     def __init__(self, dataloader: AICityFrames):
@@ -33,22 +52,22 @@ class GaussianModelling:
         cv2.imwrite('bg_mean.png', mean_img)
         cv2.imwrite('bg_std.png', std_img)
     
-    def compute_bg_mask(self, image_idx: int, k=1):
+    def compute_bg_mask(self, image_idx: int, alpha=ALPHA):
         image = self.dataloader.image(image_idx).astype(np.float64)
-        threshold = k * (self.pixelwise_std + 2)
+        threshold = alpha * (self.pixelwise_std + 2)
         mask = np.abs(image - self.pixelwise_mean) >= threshold
         return mask.astype(np.uint8) * 255
 
 
 def preprocess_mask(mask: np.ndarray) -> np.ndarray:
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, MORPH_KERNEL_SIZE_SCALED)
     mask_opened = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, MORPH_KERNEL_SIZE_SCALED)
     mask_closed = cv2.morphologyEx(mask_opened, cv2.MORPH_CLOSE, kernel)
     return mask_closed
 
 
-def merge_close_bboxes(bboxes: list, iou_threshold: float = 0.5, distance_threshold: float = 50.0) -> list:
+def merge_close_bboxes(bboxes: list, iou_threshold: float = MERGE_IOU_THRESHOLD, distance_threshold: float = MERGE_DISTANCE_THRESHOLD_SCALED) -> list:
     if len(bboxes) <= 1:
         return bboxes
     
@@ -124,14 +143,14 @@ def detect_bboxes_in_frame(mask: np.ndarray) -> list:
     for contour in contours:
         x, y, w, h = cv2.boundingRect(contour)
         aspect_ratio = max(w, h) / min(w, h)
-        if w * h > 300 and aspect_ratio <= 5.0:
+        if w * h > MIN_AREA_SCALED and aspect_ratio <= MAX_ASPECT_RATIO:
             bboxes.append((x, y, w, h))
-    bboxes = merge_close_bboxes(bboxes, iou_threshold=0.3)
+    bboxes = merge_close_bboxes(bboxes, iou_threshold=MERGE_IOU_THRESHOLD)
     return bboxes
 
 
 if __name__ == '__main__':
-    dataloader = AICityFrames(scale=0.5)
+    dataloader = AICityFrames(scale=SCALE)
     h, w = dataloader.image(0).shape
     fourcc = cv2.VideoWriter_fourcc(*'MJPG')
     
@@ -153,7 +172,7 @@ if __name__ == '__main__':
         print(f"Total frames: {dataloader.frame_count}")
         
         for frame_idx in tqdm(range(int(dataloader.frame_count * 0.25), dataloader.frame_count - 1), 'Processing frames'):
-            mask = gm.compute_bg_mask(frame_idx, 6)
+            mask = gm.compute_bg_mask(frame_idx, ALPHA)
             mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
             out.write(mask_bgr)
             cv2.imwrite(MASK_FRAMES_PATH_RAW / f"mask_{frame_idx:06d}.jpg", mask_bgr)
