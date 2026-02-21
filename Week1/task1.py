@@ -123,7 +123,8 @@ def detect_bboxes_in_frame(mask: np.ndarray) -> list:
     bboxes = []
     for contour in contours:
         x, y, w, h = cv2.boundingRect(contour)
-        if w * h > 300:
+        aspect_ratio = max(w, h) / min(w, h)
+        if w * h > 300 and aspect_ratio <= 5.0:
             bboxes.append((x, y, w, h))
     bboxes = merge_close_bboxes(bboxes, iou_threshold=0.3)
     return bboxes
