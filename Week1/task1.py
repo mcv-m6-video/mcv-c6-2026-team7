@@ -1,33 +1,43 @@
 import sys
 from pathlib import Path
 import os
-
 sys.path.insert(0, str(Path(__file__).parents[1]))
-
+import argparse
 import numpy as np
 import cv2
 from data_processor import AICityFrames
 from tqdm import tqdm
+from datetime import datetime
+import json
 from metrics import compute_map, compute_iou
 
+# Directory for raw mask frames (shared across experiments, always the same)
+MASK_FRAMES_PATH_RAW = Path("mask_frames_raw")
 
-# Scale factor for resizing input frames (to speed up experiments)
-SCALE = 0.5
+# Unique run ID and output directory for this experiment
+RUN_ID = datetime.now().strftime("%Y%m%d_%H%M%S")
+RUN_DIR = Path(__file__).parent / "results" / RUN_ID
 
-# Tunable parameters
-ALPHA = 6                        # Background subtraction threshold multiplier
-MORPH_KERNEL_SIZE = (3, 3)       # Kernel size for morphological ops (at scale 1)
-MIN_AREA = 300                   # Minimum contour area to keep a bounding box (at scale 1)
-MAX_ASPECT_RATIO = 5.0           # Maximum aspect ratio (max/min side) for a bbox
-MERGE_IOU_THRESHOLD = 0.3        # IoU threshold to merge overlapping boxes
-MERGE_DISTANCE_THRESHOLD = 50.0  # Pixel distance threshold to merge nearby boxes (at scale 1)
 
-# Scale-adjusted parameters
-_ks = max(1, int(MORPH_KERNEL_SIZE[0] * SCALE))
-_ks = _ks if _ks % 2 == 1 else _ks + 1  # keep odd for morphological kernels
-MORPH_KERNEL_SIZE_SCALED = (_ks, _ks)
-MIN_AREA_SCALED = MIN_AREA * (SCALE ** 2)
-MERGE_DISTANCE_THRESHOLD_SCALED = MERGE_DISTANCE_THRESHOLD * SCALE
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Gaussian background subtraction for vehicle detection")
+
+    # Output options
+    parser.add_argument("--save-videos", type=lambda x: x.lower() != "false", default=True, help="Write visualisation videos")
+    parser.add_argument("--save-mask-frames", type=lambda x: x.lower() != "false", default=True, help="Save raw and processed mask frames to disk")
+
+    # Scale
+    parser.add_argument("--scale", type=float, default=0.25, help="Frame resize factor to speed up experiments")
+
+    # Tunable detection parameters
+    parser.add_argument("--alpha", type=float, default=6.0, help="Background subtraction threshold multiplier")
+    parser.add_argument("--morph-kernel-size", type=int, default=7, help="Morphological kernel size at scale 1, must be odd")
+    parser.add_argument("--min-area", type=float, default=1000, help="Minimum contour area to keep a bbox, at scale 1")
+    parser.add_argument("--max-aspect-ratio", type=float, default=5.0, help="Maximum aspect ratio (max/min side) for a bbox")
+    parser.add_argument("--merge-iou-threshold", type=float, default=0.3, help="IoU threshold to merge overlapping boxes")
+    parser.add_argument("--merge-distance-threshold", type=float, default=100.0, help="Pixel distance to merge nearby boxes, at scale 1")
+
+    return parser.parse_args()
 
 
 class GaussianModelling:
@@ -52,22 +62,21 @@ class GaussianModelling:
         cv2.imwrite('bg_mean.png', mean_img)
         cv2.imwrite('bg_std.png', std_img)
     
-    def compute_bg_mask(self, image_idx: int, alpha=ALPHA):
+    def compute_bg_mask(self, image_idx: int, alpha: float):
         image = self.dataloader.image(image_idx).astype(np.float64)
         threshold = alpha * (self.pixelwise_std + 2)
         mask = np.abs(image - self.pixelwise_mean) >= threshold
         return mask.astype(np.uint8) * 255
 
 
-def preprocess_mask(mask: np.ndarray) -> np.ndarray:
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, MORPH_KERNEL_SIZE_SCALED)
+def preprocess_mask(mask: np.ndarray, morph_kernel_size: tuple) -> np.ndarray:
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, morph_kernel_size)
     mask_opened = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, MORPH_KERNEL_SIZE_SCALED)
     mask_closed = cv2.morphologyEx(mask_opened, cv2.MORPH_CLOSE, kernel)
     return mask_closed
 
 
-def merge_close_bboxes(bboxes: list, iou_threshold: float = MERGE_IOU_THRESHOLD, distance_threshold: float = MERGE_DISTANCE_THRESHOLD_SCALED) -> list:
+def merge_close_bboxes(bboxes: list, iou_threshold: float, distance_threshold: float) -> list:
     if len(bboxes) <= 1:
         return bboxes
     
@@ -92,191 +101,233 @@ def merge_close_bboxes(bboxes: list, iou_threshold: float = MERGE_IOU_THRESHOLD,
         h = max(b1[1] + b1[3], b2[1] + b2[3]) - y1
         return (x1, y1, w, h)
     
-    while True:
-        merged = True
-        while merged:
-            merged = False
-            for i in range(len(bboxes)):
-                for j in range(i + 1, len(bboxes)):
-                    if i >= len(bboxes) or j >= len(bboxes):
-                        continue
-                    
-                    x1_i, y1_i, w_i, h_i = bboxes[i]
-                    x1_j, y1_j, w_j, h_j = bboxes[j]
-                    
-                    inside_i_in_j = x1_i >= x1_j and y1_i >= y1_j and x1_i + w_i <= x1_j + w_j and y1_i + h_i <= y1_j + h_j
-                    inside_j_in_i = x1_j >= x1_i and y1_j >= y1_i and x1_j + w_j <= x1_i + w_i and y1_j + h_j <= y1_i + h_i
-                    
-                    if inside_i_in_j:
-                        bboxes.pop(j)
-                        merged = True
-                        break
-                    elif inside_j_in_i:
-                        bboxes.pop(i)
-                        merged = True
-                        break
-                    
-                    iou = compute_iou(bboxes[i], bboxes[j])
-                    if iou > iou_threshold:
-                        bboxes[i] = merge_boxes(bboxes[i], bboxes[j])
-                        bboxes.pop(j)
-                        merged = True
-                        break
-                    
-                    if boxes_overlap_or_close(bboxes[i], bboxes[j], distance_threshold):
-                        bboxes[i] = merge_boxes(bboxes[i], bboxes[j])
-                        bboxes.pop(j)
-                        merged = True
-                        break
-                if merged:
+    merged = True
+    while merged:
+        merged = False
+        for i in range(len(bboxes)):
+            for j in range(i + 1, len(bboxes)):
+                if i >= len(bboxes) or j >= len(bboxes):
+                    continue
+                
+                x1_i, y1_i, w_i, h_i = bboxes[i]
+                x1_j, y1_j, w_j, h_j = bboxes[j]
+                
+                inside_i_in_j = x1_i >= x1_j and y1_i >= y1_j and x1_i + w_i <= x1_j + w_j and y1_i + h_i <= y1_j + h_j
+                inside_j_in_i = x1_j >= x1_i and y1_j >= y1_i and x1_j + w_j <= x1_i + w_i and y1_j + h_j <= y1_i + h_i
+                
+                if inside_i_in_j:
+                    bboxes.pop(j)
+                    merged = True
                     break
-        
-        break
+                elif inside_j_in_i:
+                    bboxes.pop(i)
+                    merged = True
+                    break
+                
+                iou = compute_iou(bboxes[i], bboxes[j])
+                if iou > iou_threshold:
+                    bboxes[i] = merge_boxes(bboxes[i], bboxes[j])
+                    bboxes.pop(j)
+                    merged = True
+                    break
+                
+                if boxes_overlap_or_close(bboxes[i], bboxes[j], distance_threshold):
+                    bboxes[i] = merge_boxes(bboxes[i], bboxes[j])
+                    bboxes.pop(j)
+                    merged = True
+                    break
+            if merged:
+                break
     
     return bboxes
 
 
-def detect_bboxes_in_frame(mask: np.ndarray) -> list:
-    mask_closed = preprocess_mask(mask)
+def detect_bboxes_in_frame(mask: np.ndarray, min_area_scaled: float, max_aspect_ratio: float,
+                           merge_iou_threshold: float, merge_distance_threshold_scaled: float,
+                           morph_kernel_size: tuple = None, preprocessed: bool = False) -> list:
+    mask_closed = mask if preprocessed else preprocess_mask(mask, morph_kernel_size)
     contours, _ = cv2.findContours(mask_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     bboxes = []
     for contour in contours:
         x, y, w, h = cv2.boundingRect(contour)
         aspect_ratio = max(w, h) / min(w, h)
-        if w * h > MIN_AREA_SCALED and aspect_ratio <= MAX_ASPECT_RATIO:
+        if w * h > min_area_scaled and aspect_ratio <= max_aspect_ratio:
             bboxes.append((x, y, w, h))
-    bboxes = merge_close_bboxes(bboxes, iou_threshold=MERGE_IOU_THRESHOLD)
+    bboxes = merge_close_bboxes(bboxes, iou_threshold=merge_iou_threshold,
+                                 distance_threshold=merge_distance_threshold_scaled)
     return bboxes
 
 
+def save_experiment(args: argparse.Namespace, result: dict) -> None:
+    experiment = {
+        "run_id": RUN_ID,
+        "params": {
+            "scale": args.scale,
+            "alpha": args.alpha,
+            "morph_kernel_size": args.morph_kernel_size,
+            "min_area": args.min_area,
+            "max_aspect_ratio": args.max_aspect_ratio,
+            "merge_iou_threshold": args.merge_iou_threshold,
+            "merge_distance_threshold": args.merge_distance_threshold,
+        },
+        "results": {
+            "mAP": result["mAP"],
+            "recall": result["recall"],
+            "precision": result["precision"],
+            "f1": result["f1"],
+        }
+    }
+
+    with open(RUN_DIR / "results.json", "w") as f:
+        json.dump(experiment, f, indent=2)
+
+    print(f"Saved experiment to {RUN_DIR / 'results.json'}")
+
+
 if __name__ == '__main__':
-    dataloader = AICityFrames(scale=SCALE)
-    h, w = dataloader.image(0).shape
-    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+
+    args = parse_args()
+
+    # Scale-adjusted parameters derived from args
+    _ks = max(1, int(args.morph_kernel_size * args.scale))
+    _ks = _ks if _ks % 2 == 1 else _ks + 1  # keep odd for morphological kernels
+    MORPH_KERNEL_SIZE_SCALED = (_ks, _ks)
+    MIN_AREA_SCALED = args.min_area * (args.scale ** 2)
+    MERGE_DISTANCE_THRESHOLD_SCALED = args.merge_distance_threshold * args.scale
+
+    # Create dataloader
+    dataloader = AICityFrames(scale=args.scale)
+    print(f"Total frames: {dataloader.frame_count}")
+
+    # Instantiate Gaussian Modelling
+    gm = GaussianModelling(dataloader)
     
-    MASK_FRAMES_PATH_RAW = Path("mask_frames_raw")
-    MASK_FRAMES_PATH_PROCESSED = Path("mask_frames_processed")
-    MASK_FRAMES_PATH_RAW.mkdir(parents=True, exist_ok=True)
-    MASK_FRAMES_PATH_PROCESSED.mkdir(parents=True, exist_ok=True)
-    
-    generate_masks = True
-    generate_bboxes = True
-    evaluate = True
-    
-    if generate_masks:
-        gm = GaussianModelling(dataloader)
-        
-        output_path = Path(__file__).parent / "bg_mask_output.mp4"
-        out = cv2.VideoWriter(str(output_path), fourcc, 10, (w, h))
-        
-        print(f"Total frames: {dataloader.frame_count}")
-        
-        for frame_idx in tqdm(range(int(dataloader.frame_count * 0.25), dataloader.frame_count - 1), 'Processing frames'):
-            mask = gm.compute_bg_mask(frame_idx, ALPHA)
+    # Build ground truth
+    # ============================================================================
+    print("Building ground truth from dataloader...")
+    ground_truth = {}
+
+    # As stated in the instructions, we map both classes to the same one
+    label_to_class = {'car': 0, 'bike': 0}
+
+    for frame_idx in range(dataloader.frame_count):
+        boxes = dataloader.boxes(frame_idx)
+        gt_boxes = []
+        for box in boxes:
+            if box.outside == 0 and box.label in label_to_class:
+                if box.label == 'car' and box.attributes.get('parked') == 'true':
+                    continue
+                x = int(box.xtl * dataloader.scale)
+                y = int(box.ytl * dataloader.scale)
+                w = int((box.xbr - box.xtl) * dataloader.scale)
+                h = int((box.ybr - box.ytl) * dataloader.scale)
+                gt_boxes.append(((x, y, w, h), label_to_class[box.label]))
+        if gt_boxes:
+            ground_truth[frame_idx] = gt_boxes
+
+    print(f"Loaded GT for {len(ground_truth)} frames")
+
+    # Create the experiment output directory
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Create mask frame directories (if mask frame saving enabled)
+    if args.save_mask_frames:
+        MASK_FRAMES_PATH_RAW.mkdir(parents=True, exist_ok=True)
+        mask_frames_path_processed = RUN_DIR / "mask_frames_processed"
+        mask_frames_path_processed.mkdir(parents=True, exist_ok=True)
+
+    # Initialise video writers (if video saving enabled)
+    if args.save_videos:
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        frame_h, frame_w = dataloader.image(0).shape[:2]
+        output_path = RUN_DIR / "bg_mask_output.mp4"
+        output_path_bboxes = RUN_DIR / "bg_mask_bboxes_output.mp4"
+        output_path_comparison = RUN_DIR / "comparison_output.mp4"
+        out = cv2.VideoWriter(str(output_path), fourcc, 10, (frame_w, frame_h))
+        out_bboxes = cv2.VideoWriter(str(output_path_bboxes), fourcc, 10, (frame_w, frame_h))
+        out_comparison = cv2.VideoWriter(str(output_path_comparison), fourcc, 10, (frame_w, frame_h))
+
+    # Detection and prediction
+    # ============================================================================
+    predictions = {}
+
+    for frame_idx in tqdm(range(int(dataloader.frame_count * 0.25), dataloader.frame_count - 1), 'Processing frames'):
+
+        # Main processing
+        # -------------------------------
+        mask = gm.compute_bg_mask(frame_idx, args.alpha)
+        mask_processed = preprocess_mask(mask, MORPH_KERNEL_SIZE_SCALED)
+        bboxes = detect_bboxes_in_frame(
+            mask_processed,
+            min_area_scaled=MIN_AREA_SCALED,
+            max_aspect_ratio=args.max_aspect_ratio,
+            merge_iou_threshold=args.merge_iou_threshold,
+            merge_distance_threshold_scaled=MERGE_DISTANCE_THRESHOLD_SCALED,
+            preprocessed=True,
+        )
+        predictions[frame_idx] = [(bbox, 1.0, 0) for bbox in bboxes]
+
+        # Optional mask frame saving
+        # -------------------------------
+        if args.save_mask_frames:
+            mask_bgr_frames = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+            cv2.imwrite(str(MASK_FRAMES_PATH_RAW          / f"mask_{frame_idx:06d}.jpg"), mask_bgr_frames)
+            cv2.imwrite(str(mask_frames_path_processed     / f"mask_{frame_idx:06d}.jpg"), mask_processed)
+
+        # Optional video saving
+        # -------------------------------
+        if args.save_videos:
+            frame_bgr = cv2.cvtColor(dataloader.image(frame_idx), cv2.COLOR_GRAY2BGR)
+
+            # Mask video
             mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
             out.write(mask_bgr)
-            cv2.imwrite(MASK_FRAMES_PATH_RAW / f"mask_{frame_idx:06d}.jpg", mask_bgr)
-        
-        out.release()
-        print(f"Saved video to {output_path}")
-    
-    if generate_bboxes:
-        output_path_bboxes = Path(__file__).parent / "bg_mask_bboxes_output.mp4"
-        out_bboxes = cv2.VideoWriter(str(output_path_bboxes), fourcc, 10, (w, h))
-        
-        for frame_idx in tqdm(range(int(dataloader.frame_count * 0.25), dataloader.frame_count - 1), 'Processing frames with bboxes'):
-            frame = dataloader.image(frame_idx)
-            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-            
-            mask = cv2.imread(str(MASK_FRAMES_PATH_RAW / f"mask_{frame_idx:06d}.jpg"), cv2.IMREAD_GRAYSCALE)
-            mask_processed = preprocess_mask(mask)
-            cv2.imwrite(str(MASK_FRAMES_PATH_PROCESSED / f"mask_{frame_idx:06d}.jpg"), mask_processed)
-            
-            bboxes = detect_bboxes_in_frame(mask)
-            
+
+            # Bbox video
+            frame_bboxes = frame_bgr.copy()
             for (x, y, w, h) in bboxes:
-                cv2.rectangle(frame_bgr, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            
-            out_bboxes.write(frame_bgr)
-        
-        out_bboxes.release()
-        print(f"Saved video with bboxes to {output_path_bboxes}")
-    
-    if evaluate:
-        print("Building ground truth from dataloader...")
-        ground_truth = {}
-        
-        # As stated in the instructions, we map both classes to the same one
-        label_to_class = {'car': 0, 'bike': 0}
-        
-        for frame_idx in range(dataloader.frame_count):
-            boxes = dataloader.boxes(frame_idx)
-            gt_boxes = []
-            for box in boxes:
-                if box.outside == 0 and box.label in label_to_class:
-                    if box.label == 'car' and box.attributes.get('parked') == 'true':
-                        continue
-                    x = int(box.xtl * dataloader.scale)
-                    y = int(box.ytl * dataloader.scale)
-                    w = int((box.xbr - box.xtl) * dataloader.scale)
-                    h = int((box.ybr - box.ytl) * dataloader.scale)
-                    gt_boxes.append(((x, y, w, h), label_to_class[box.label]))
-            if gt_boxes:
-                ground_truth[frame_idx] = gt_boxes
-        
-        print(f"Loaded GT for {len(ground_truth)} frames")
-        
-        print("Running detection on all frames...")
-        predictions = {}
-        for frame_idx in tqdm(range(int(dataloader.frame_count * 0.25), dataloader.frame_count - 1)):
-            mask_path = MASK_FRAMES_PATH_PROCESSED / f"mask_{frame_idx:06d}.jpg"
-            if mask_path.exists():
-                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
-                bboxes = detect_bboxes_in_frame(mask)
-                if bboxes:
-                    predictions[frame_idx] = [(bbox, 1.0, 0) for bbox in bboxes]
-        
-        print(f"Total predictions: {sum(len(v) for v in predictions.values())}")
-        
-        print("Creating comparison video with GT and predicted bboxes...")
-        output_path_comparison = Path(__file__).parent / "comparison_output.mp4"
-        
-        frame_h, frame_w = dataloader.image(0).shape[:2]
-        out_comparison = cv2.VideoWriter(str(output_path_comparison), cv2.VideoWriter_fourcc(*'mp4v'), 10, (frame_w, frame_h))
-        
-        for frame_idx in tqdm(range(int(dataloader.frame_count * 0.25), dataloader.frame_count - 1), 'Creating comparison video'):
-            frame = dataloader.image(frame_idx)
-            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-            
-            gt_bboxes = ground_truth.get(frame_idx, [])
+                cv2.rectangle(frame_bboxes, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            out_bboxes.write(frame_bboxes)
+
+            # Comparison video
+            gt_bboxes   = ground_truth.get(frame_idx, [])
             pred_bboxes = predictions.get(frame_idx, [])
-            
-            for (bbox, class_id) in gt_bboxes:
+            frame_comparison = frame_bgr.copy()
+            for (bbox, _) in gt_bboxes:
                 x, y, w_box, h_box = bbox
-                cv2.rectangle(frame_bgr, (x, y), (x + w_box, y + h_box), (255, 0, 0), 2)
-            
-            for (bbox, score, class_id) in pred_bboxes:
+                cv2.rectangle(frame_comparison, (x, y), (x + w_box, y + h_box), (255, 0, 0), 2)
+            for (bbox, _, _) in pred_bboxes:
                 x, y, w_box, h_box = bbox
-                cv2.rectangle(frame_bgr, (x, y), (x + w_box, y + h_box), (0, 255, 0), 2)
-            
+                cv2.rectangle(frame_comparison, (x, y), (x + w_box, y + h_box), (0, 255, 0), 2)
             for (gt_bbox, _) in gt_bboxes:
                 for (pred_bbox, _, _) in pred_bboxes:
                     iou = compute_iou(gt_bbox, pred_bbox)
                     if iou > 0:
                         x = max(gt_bbox[0], pred_bbox[0])
                         y = max(gt_bbox[1], pred_bbox[1])
-                        cv2.putText(frame_bgr, f"IoU: {iou:.2f}", (x, y - 5), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-            
-            if frame_bgr is not None and frame_bgr.shape[1] == frame_w and frame_bgr.shape[0] == frame_h:
-                out_comparison.write(frame_bgr)
-        
+                        cv2.putText(frame_comparison, f"IoU: {iou:.2f}", (x, y - 5),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            if frame_comparison.shape[1] == frame_w and frame_comparison.shape[0] == frame_h:
+                out_comparison.write(frame_comparison)
+
+    # Close video writers
+    if args.save_videos:
+        out.release()
+        out_bboxes.release()
         out_comparison.release()
+        print(f"Saved mask video to {output_path}")
+        print(f"Saved bbox video to {output_path_bboxes}")
         print(f"Saved comparison video to {output_path_comparison}")
-        
-        print("Computing mAP...")
-        result = compute_map(predictions, ground_truth, num_classes=1, iou_threshold=0.5)
-        print(f"\nmAP@0.5: {result['mAP']:.4f}")
-        print(f"Recall: {result['recall']:.4f}")
-        print(f"Precision: {result['precision']:.4f}")
-        print(f"F1 Score: {result['f1']:.4f}")
+
+    # Evaluate
+    # ============================================================================
+    print("Computing mAP...")
+    result = compute_map(predictions, ground_truth, num_classes=1, iou_threshold=0.5)
+    print(f"\nmAP@0.5: {result['mAP']:.4f}")
+    print(f"Recall: {result['recall']:.4f}")
+    print(f"Precision: {result['precision']:.4f}")
+    print(f"F1 Score: {result['f1']:.4f}")
+
+    # Save experiment results
+    # ============================================================================
+    save_experiment(args, result)
