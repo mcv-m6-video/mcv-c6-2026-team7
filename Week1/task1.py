@@ -37,6 +37,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--merge-iou-threshold", type=float, default=0.3, help="IoU threshold to merge overlapping boxes")
     parser.add_argument("--merge-distance-threshold", type=float, default=100.0, help="Pixel distance to merge nearby boxes, at scale 1")
 
+    # Modelling mode
+    parser.add_argument("--adaptive", action="store_true", help="Use adaptive Gaussian modelling instead of non-adaptive")
+    parser.add_argument("--rho", type=float, default=0.01, help="Learning rate for adaptive modelling")
+
     return parser.parse_args()
 
 
@@ -67,6 +71,21 @@ class GaussianModelling:
         threshold = alpha * (self.pixelwise_std + 2)
         mask = np.abs(image - self.pixelwise_mean) >= threshold
         return mask.astype(np.uint8) * 255
+    
+    def compute_bg_mask_and_update(self, image_idx: int, alpha: float, rho: float):
+        """Used for adaptive modelling"""
+        image = self.dataloader.image(image_idx).astype(np.float64)
+        threshold = alpha * (self.pixelwise_std + 2)
+        is_fg = np.abs(image - self.pixelwise_mean) >= threshold # foreground
+        mask = is_fg.astype(np.uint8) * 255
+
+        # Update model only for background pixels
+        is_bg = ~is_fg
+        self.pixelwise_mean[is_bg] = rho * image[is_bg] + (1 - rho) * self.pixelwise_mean[is_bg]
+        diff = image[is_bg] - self.pixelwise_mean[is_bg]
+        self.pixelwise_std[is_bg] = np.sqrt(rho * diff ** 2 + (1 - rho) * self.pixelwise_std[is_bg] ** 2)
+
+        return mask
 
 
 def preprocess_mask(mask: np.ndarray, morph_kernel_size: tuple) -> np.ndarray:
@@ -164,6 +183,8 @@ def save_experiment(args: argparse.Namespace, result: dict) -> None:
         "params": {
             "scale": args.scale,
             "alpha": args.alpha,
+            "adaptive": args.adaptive,
+            "rho": args.rho if args.adaptive else None,
             "morph_kernel_size": args.morph_kernel_size,
             "min_area": args.min_area,
             "max_aspect_ratio": args.max_aspect_ratio,
@@ -255,7 +276,10 @@ if __name__ == '__main__':
 
         # Main processing
         # -------------------------------
-        mask = gm.compute_bg_mask(frame_idx, args.alpha)
+        if args.adaptive:
+            mask = gm.compute_bg_mask_and_update(frame_idx, args.alpha, args.rho)
+        else:
+            mask = gm.compute_bg_mask(frame_idx, args.alpha)
         mask_processed = preprocess_mask(mask, MORPH_KERNEL_SIZE_SCALED)
         bboxes = detect_bboxes_in_frame(
             mask_processed,
