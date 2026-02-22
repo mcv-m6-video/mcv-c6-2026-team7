@@ -30,16 +30,14 @@ def compute_iou(box1: tuple, box2: tuple) -> float:
 
 
 def compute_ap(recalls: np.ndarray, precisions: np.ndarray) -> float:
-    recalls = np.concatenate(([0.0], recalls, [1.0]))
-    precisions = np.concatenate(([0.0], precisions, [0.0]))
-    
-    for i in range(len(precisions) - 2, -1, -1):
-        precisions[i] = max(precisions[i], precisions[i + 1])
-    
-    indices = np.where(recalls[1:] != recalls[:-1])[0]
-    ap = np.sum((recalls[indices + 1] - recalls[indices]) * precisions[indices + 1])
-    
-    return ap
+    """Compute AP using the Pascal VOC 11-point interpolation method.
+    """
+    ap = 0.0
+    for r in np.arange(0.0, 1.1, 0.1):
+        prec_at_recall = precisions[recalls >= r]
+        p_interp = np.max(prec_at_recall) if prec_at_recall.size > 0 else 0.0
+        ap += p_interp
+    return ap / 11.0
 
 
 def compute_map(
