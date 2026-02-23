@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 import argparse
 import numpy as np
 import cv2
+import cv2.bgsegm
 from data_processor import AICityFrames
 from tqdm import tqdm
 from datetime import datetime
@@ -16,11 +17,15 @@ MASK_FRAMES_PATH_RAW = Path("mask_frames_raw")
 
 # Unique run ID and output directory for this experiment
 RUN_ID = datetime.now().strftime("%Y%m%d_%H%M%S")
-RUN_DIR = Path(__file__).parent / "results" / RUN_ID
-
+RUN_DIR = None
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Gaussian background subtraction for vehicle detection")
+
+    # Method
+    parser.add_argument("--method", type=str, default="gaussian",
+                        choices=["gaussian", "mog2", "lsbp"],
+                        help="Background substraction method")
 
     # Output options
     parser.add_argument("--save-videos", type=lambda x: x.lower() != "false", default=True, help="Write visualisation videos")
@@ -30,17 +35,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scale", type=float, default=0.25, help="Frame resize factor to speed up experiments")
 
     # Tunable detection parameters
-    parser.add_argument("--alpha", type=float, default=6.0, help="Background subtraction threshold multiplier")
     parser.add_argument("--morph-kernel-size", type=int, default=7, help="Morphological kernel size at scale 1, must be odd")
     parser.add_argument("--min-area", type=float, default=1000, help="Minimum contour area to keep a bbox, at scale 1")
     parser.add_argument("--max-aspect-ratio", type=float, default=5.0, help="Maximum aspect ratio (max/min side) for a bbox")
     parser.add_argument("--merge-iou-threshold", type=float, default=0.3, help="IoU threshold to merge overlapping boxes")
     parser.add_argument("--merge-distance-threshold", type=float, default=100.0, help="Pixel distance to merge nearby boxes, at scale 1")
 
-    # Modelling mode
+    # Gaussian parameters
+    parser.add_argument("--alpha", type=float, default=6.0, help="Background subtraction threshold multiplier")
     parser.add_argument("--adaptive", action="store_true", help="Use adaptive Gaussian modelling instead of non-adaptive")
     parser.add_argument("--rho", type=float, default=0.01, help="Learning rate for adaptive modelling")
 
+    # MOG2 parameters
+    parser.add_argument("--mog2-history", type=int, default=500, help="MOG2: length of history")
+    parser.add_argument("--mog2-var-threshold", type=float, default=16.0, help="MOG2: variance threshold (Mahalanobis distance)")
+    parser.add_argument("--mog2-detect-shadows", type=lambda x: x.lower() != "false", default=True, help="MOG2: enable shadow detection (mask=127 for shadows)")
+
+    # LSBP parameters
+    parser.add_argument("--lsbp-radius", type=int, default=16, help="Radius of the LSBP binary pattern neighbourhood (larger = more context, slower)")
+    parser.add_argument("--t-lower", type=float, default=3.0, help="Lower similarity threshold: smaller values = more foreground detections")
+    
     # N Random Ranks
     parser.add_argument("--num-random-ranks", type=int, default=10, help="Number of random rankings (N) to average AP over")
     parser.add_argument("--seed", type=int, default=0, help="Random seed for reproducible random-ranking evaluation")
@@ -180,21 +194,45 @@ def detect_bboxes_in_frame(mask: np.ndarray, min_area_scaled: float, max_aspect_
                                  distance_threshold=merge_distance_threshold_scaled)
     return bboxes
 
+def threshold_shadow_to_fg(mask_raw: np.ndarray) -> np.ndarray:
+    """MOG2/LSBP may output 127 for shadows. Keep only 255 as foreground."""
+    return np.where(mask_raw == 255, np.uint8(255), np.uint8(0))
 
-def save_experiment(args: argparse.Namespace, result: dict) -> None:
-    experiment = {
-        "run_id": RUN_ID,
-        "params": {
-            "scale": args.scale,
+def save_experiment(run_dir: str, run_id: str, args: argparse.Namespace, result: dict) -> None:
+    
+    params = {
+        "scale": args.scale,
+        "morph_kernel_size": args.morph_kernel_size,
+        "min_area": args.min_area,
+        "max_aspect_ratio": args.max_aspect_ratio,
+        "merge_iou_threshold": args.merge_iou_threshold,
+        "merge_distance_threshold": args.merge_distance_threshold,
+        "num_random_ranks": args.num_random_ranks,
+        "seed": args.seed,
+    }
+    
+    if args.method == "gaussian":
+        params.update({
             "alpha": args.alpha,
             "adaptive": args.adaptive,
             "rho": args.rho if args.adaptive else None,
-            "morph_kernel_size": args.morph_kernel_size,
-            "min_area": args.min_area,
-            "max_aspect_ratio": args.max_aspect_ratio,
-            "merge_iou_threshold": args.merge_iou_threshold,
-            "merge_distance_threshold": args.merge_distance_threshold,
-        },
+        })
+    elif args.method == "mog2":
+        params.update({
+            "mog2_history": args.mog2_history,
+            "mog2_var_threshold": args.mog2_var_threshold,
+            "mog2_detect_shadows": args.mog2_detect_shadows,
+        })
+    elif args.method == "lsbp":
+        params.update({
+            "lsbp_radius": args.lsbp_radius,
+            "lsbp_t_lower": args.t_lower,
+        })
+
+    experiment = {
+        "run_id": run_id,
+        "method": args.method,
+        "params": params,
         "results": {
             "mAP": result["mAP"],
             "recall": result["recall"],
@@ -203,15 +241,19 @@ def save_experiment(args: argparse.Namespace, result: dict) -> None:
         }
     }
 
-    with open(RUN_DIR / "results.json", "w") as f:
+    with open(run_dir / "results.json", "w") as f:
         json.dump(experiment, f, indent=2)
 
-    print(f"Saved experiment to {RUN_DIR / 'results.json'}")
+    print(f"Saved experiment to {run_dir / 'results.json'}")
 
 
 if __name__ == '__main__':
 
     args = parse_args()
+
+    RUN_ID = datetime.now().strftime("%Y%m%d_%H%M%S")
+    METHOD_PREFIX = args.method.upper() # GAUSSIAN / MOG2 / LSBP
+    RUN_DIR = Path(__file__).parent / "results" / f"{METHOD_PREFIX}_{RUN_ID}"
 
     # Scale-adjusted parameters derived from args
     _ks = max(1, int(args.morph_kernel_size * args.scale))
@@ -222,6 +264,8 @@ if __name__ == '__main__':
 
     # Create dataloader
     dataloader = AICityFrames(scale=args.scale)
+    total_frames = dataloader.frame_count
+    warmup_end = int(total_frames * 0.25)
     print(f"Total frames: {dataloader.frame_count}")
 
     # Instantiate Gaussian Modelling
@@ -272,6 +316,45 @@ if __name__ == '__main__':
         out_bboxes = cv2.VideoWriter(str(output_path_bboxes), fourcc, 10, (frame_w, frame_h))
         out_comparison = cv2.VideoWriter(str(output_path_comparison), fourcc, 10, (frame_w, frame_h))
 
+    if args.method == "gaussian":
+        gm = GaussianModelling(dataloader)
+
+        def get_mask(frame_idx: int) -> np.ndarray:
+            if args.adaptive:
+                return gm.compute_bg_mask_and_update(frame_idx, args.alpha, args.rho)
+            return gm.compute_bg_mask(frame_idx, args.alpha)
+    
+    elif args.method == "mog2":
+        subtractor = cv2.createBackgroundSubtractorMOG2(
+            history=args.mog2_history,
+            varThreshold=args.mog2_var_threshold,
+            detectShadows=args.mog2_detect_shadows,
+        )
+
+        for i in tqdm(range(warmup_end), "Warming up MOG2 (first 25%)"):
+            subtractor.apply(dataloader.image(i))
+
+        def get_mask(frame_idx: int) -> np.ndarray:
+            raw = subtractor.apply(dataloader.image(frame_idx))
+            return threshold_shadow_to_fg(raw)
+
+    elif args.method == "lsbp":
+        subtractor = cv2.bgsegm.createBackgroundSubtractorLSBP(
+            mc=cv2.bgsegm.LSBP_CAMERA_MOTION_COMPENSATION_NONE,
+            LSBPRadius=args.lsbp_radius,
+            Tlower=args.t_lower,
+        )
+
+        for i in tqdm(range(warmup_end), "Warming up LSBP (first 25%)"):
+            subtractor.apply(dataloader.image(i))
+
+        def get_mask(frame_idx: int) -> np.ndarray:
+            raw = subtractor.apply(dataloader.image(frame_idx))
+            return threshold_shadow_to_fg(raw)
+        
+    else:
+        raise ValueError(f"Unknown method: {args.method}")
+
     # Detection and prediction
     # ============================================================================
     predictions = {}
@@ -280,11 +363,9 @@ if __name__ == '__main__':
 
         # Main processing
         # -------------------------------
-        if args.adaptive:
-            mask = gm.compute_bg_mask_and_update(frame_idx, args.alpha, args.rho)
-        else:
-            mask = gm.compute_bg_mask(frame_idx, args.alpha)
+        mask = get_mask(frame_idx)
         mask_processed = preprocess_mask(mask, MORPH_KERNEL_SIZE_SCALED)
+
         bboxes = detect_bboxes_in_frame(
             mask_processed,
             min_area_scaled=MIN_AREA_SCALED,
@@ -369,4 +450,4 @@ if __name__ == '__main__':
 
     # Save experiment results
     # ============================================================================
-    save_experiment(args, result)
+    save_experiment(RUN_DIR, RUN_ID, args, result)
