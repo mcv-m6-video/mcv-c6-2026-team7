@@ -6,5 +6,6 @@ parsed_data
 *.png
 *.jpeg
 *.jpg
+results
 
 .DS_Store
