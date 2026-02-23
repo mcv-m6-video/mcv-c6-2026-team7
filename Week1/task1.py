@@ -41,6 +41,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--adaptive", action="store_true", help="Use adaptive Gaussian modelling instead of non-adaptive")
     parser.add_argument("--rho", type=float, default=0.01, help="Learning rate for adaptive modelling")
 
+    # N Random Ranks
+    parser.add_argument("--num-random-ranks", type=int, default=10, help="Number of random rankings (N) to average AP over")
+    parser.add_argument("--seed", type=int, default=0, help="Random seed for reproducible random-ranking evaluation")
+
     return parser.parse_args()
 
 
@@ -346,7 +350,18 @@ if __name__ == '__main__':
     # Evaluate
     # ============================================================================
     print("Computing mAP...")
-    result = compute_map(predictions, ground_truth, num_classes=1, iou_threshold=0.5, replace_confidence_at_random=True)
+
+    np.random.seed(args.seed)
+
+    result = compute_map(
+        predictions,
+        ground_truth,
+        num_classes=1,
+        iou_threshold=0.5,
+        replace_confidence_at_random=True,
+        N=args.num_random_ranks,
+    )
+    
     print(f"\nmAP@0.5: {result['mAP']:.4f}")
     print(f"Recall: {result['recall']:.4f}")
     print(f"Precision: {result['precision']:.4f}")
