@@ -127,6 +127,8 @@ def compute_map(
     replace_confidence_at_random: bool = True,
     N: int = 100
 ) -> dict:
+    if not replace_confidence_at_random and N != 1:
+        raise ValueError("N must be 1 when replace_confidence_at_random is False.")
     # Single deterministic run when not replacing confidence scores
     if not replace_confidence_at_random:
         return _compute_map_single_run(
