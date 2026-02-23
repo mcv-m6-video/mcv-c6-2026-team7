@@ -346,7 +346,7 @@ if __name__ == '__main__':
     # Evaluate
     # ============================================================================
     print("Computing mAP...")
-    result = compute_map(predictions, ground_truth, num_classes=1, iou_threshold=0.5)
+    result = compute_map(predictions, ground_truth, num_classes=1, iou_threshold=0.5, replace_confidence_at_random=True)
     print(f"\nmAP@0.5: {result['mAP']:.4f}")
     print(f"Recall: {result['recall']:.4f}")
     print(f"Precision: {result['precision']:.4f}")

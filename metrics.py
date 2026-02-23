@@ -40,11 +40,12 @@ def compute_ap(recalls: np.ndarray, precisions: np.ndarray) -> float:
     return ap / 11.0
 
 
-def compute_map(
-    predictions: dict,  # {frame_idx: [(bbox, score, class_id), ...]}
-    ground_truth: dict,  # {frame_idx: [(bbox, class_id), ...]}
+def _compute_map_single_run(
+    predictions: dict,
+    ground_truth: dict,
     num_classes: int,
-    iou_threshold: float = 0.5
+    iou_threshold: float,
+    replace_confidence_at_random: bool,
 ) -> dict:
     aps = []
     total_tp = 0
@@ -56,6 +57,8 @@ def compute_map(
         for frame_idx, preds in predictions.items():
             for bbox, score, cls in preds:
                 if cls == class_id:
+                    if replace_confidence_at_random:
+                        score = np.random.rand()
                     pred_boxes.append((frame_idx, bbox, score))
         
         pred_boxes.sort(key=lambda x: x[2], reverse=True)
@@ -111,5 +114,48 @@ def compute_map(
         'AP_per_class': aps,
         'recall': recall,
         'precision': precision,
-        'f1': f1
+        'f1': f1,
+    }
+
+
+def compute_map(
+    predictions: dict,  # {frame_idx: [(bbox, score, class_id), ...]}
+    ground_truth: dict,  # {frame_idx: [(bbox, class_id), ...]}
+    num_classes: int,
+    *,
+    iou_threshold: float = 0.5,
+    replace_confidence_at_random: bool = False,
+    N: int = 100
+) -> dict:
+    # Single deterministic run when not replacing confidence scores
+    if not replace_confidence_at_random:
+        return _compute_map_single_run(
+            predictions, ground_truth, num_classes,
+            iou_threshold, replace_confidence_at_random=False,
+        )
+
+    all_results = [
+        _compute_map_single_run(
+            predictions, ground_truth, num_classes,
+            iou_threshold, replace_confidence_at_random=True,
+        )
+        for _ in range(N)
+    ]
+
+    mean_mAP = np.mean([r['mAP'] for r in all_results])
+    std_mAP = np.std([r['mAP'] for r in all_results])
+    mean_ap_per_class = np.mean(
+        [r['AP_per_class'] for r in all_results], axis=0
+    ).tolist()
+    mean_recall = np.mean([r['recall'] for r in all_results])
+    mean_precision = np.mean([r['precision'] for r in all_results])
+    mean_f1 = np.mean([r['f1'] for r in all_results])
+
+    return {
+        'mAP': float(mean_mAP),
+        'std_mAP': float(std_mAP),
+        'AP_per_class': mean_ap_per_class,
+        'recall': float(mean_recall),
+        'precision': float(mean_precision),
+        'f1': float(mean_f1),
     }
