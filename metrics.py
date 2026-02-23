@@ -124,7 +124,7 @@ def compute_map(
     num_classes: int,
     *,
     iou_threshold: float = 0.5,
-    replace_confidence_at_random: bool = False,
+    replace_confidence_at_random: bool = True,
     N: int = 100
 ) -> dict:
     # Single deterministic run when not replacing confidence scores
