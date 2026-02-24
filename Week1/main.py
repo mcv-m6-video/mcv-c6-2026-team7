@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save-mask-frames", type=lambda x: x.lower() != "false", default=True, help="Save raw and processed mask frames to disk")
 
     # Scale
-    parser.add_argument("--scale", type=float, default=0.25, help="Frame resize factor to speed up experiments")
+    parser.add_argument("--scale", type=float, default=1/3, help="Frame resize factor to speed up experiments")
 
     # Tunable detection parameters
     parser.add_argument("--morph-kernel-size", type=int, default=7, help="Morphological kernel size at scale 1, must be odd")
@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--merge-distance-threshold", type=float, default=100.0, help="Pixel distance to merge nearby boxes, at scale 1")
 
     # Gaussian parameters
-    parser.add_argument("--alpha", type=float, default=6.0, help="Background subtraction threshold multiplier")
+    parser.add_argument("--alpha", type=float, default=3.0, help="Background subtraction threshold multiplier")
     parser.add_argument("--adaptive", action="store_true", help="Use adaptive Gaussian modelling instead of non-adaptive")
     parser.add_argument("--rho", type=float, default=0.01, help="Learning rate for adaptive modelling")
 
@@ -91,23 +91,25 @@ class GaussianModelling:
         cv2.imwrite('bg_mean.png', mean_img)
         cv2.imwrite('bg_std.png', std_img)
     
-    def compute_bg_mask(self, image_idx: int, alpha: float):
-        image = self.dataloader.image(image_idx).astype(np.float64)
+    def compute_bg_mask(self, image: np.ndarray, alpha: float):
+        image = image.astype(np.float64)
         threshold = alpha * (self.pixelwise_std + 2)
         mask = np.abs(image - self.pixelwise_mean) >= threshold
         return mask.astype(np.uint8) * 255
-    
-    def compute_bg_mask_and_update(self, image_idx: int, alpha: float, rho: float):
+
+    def compute_bg_mask_and_update(self, image: np.ndarray, alpha: float, rho: float):
         """Used for adaptive modelling"""
-        image = self.dataloader.image(image_idx).astype(np.float64)
+        image = image.astype(np.float64)
         threshold = alpha * (self.pixelwise_std + 2)
         is_fg = np.abs(image - self.pixelwise_mean) >= threshold # foreground
         mask = is_fg.astype(np.uint8) * 255
 
         # Update model only for background pixels
         is_bg = ~is_fg
-        self.pixelwise_mean[is_bg] = rho * image[is_bg] + (1 - rho) * self.pixelwise_mean[is_bg]
-        diff = image[is_bg] - self.pixelwise_mean[is_bg]
+        bg_pixels = image[is_bg]
+        old_mean = self.pixelwise_mean[is_bg].copy()
+        self.pixelwise_mean[is_bg] = rho * bg_pixels + (1 - rho) * old_mean
+        diff = bg_pixels - old_mean  # use old mean so std is not underestimated
         self.pixelwise_std[is_bg] = np.sqrt(rho * diff ** 2 + (1 - rho) * self.pixelwise_std[is_bg] ** 2)
 
         return mask
@@ -130,13 +132,10 @@ if __name__ == '__main__':
     MERGE_DISTANCE_THRESHOLD_SCALED = args.merge_distance_threshold * args.scale
 
     # Create dataloader
-    dataloader = AICityFrames(scale=args.scale)
+    dataloader = AICityFrames(scale=args.scale, image_index_base=0)
     total_frames = dataloader.frame_count
     warmup_end = int(total_frames * 0.25)
     print(f"Total frames: {dataloader.frame_count}")
-
-    # Instantiate Gaussian Modelling
-    gm = GaussianModelling(dataloader)
     
     # Build ground truth
     # ============================================================================
@@ -146,7 +145,7 @@ if __name__ == '__main__':
     # As stated in the instructions, we map both classes to the same one
     label_to_class = {'car': 0, 'bike': 0}
 
-    for frame_idx in range(dataloader.frame_count):
+    for frame_idx in range(warmup_end, total_frames):
         boxes = dataloader.boxes(frame_idx)
         gt_boxes = []
         for box in boxes:
@@ -176,20 +175,19 @@ if __name__ == '__main__':
     if args.save_videos:
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         frame_h, frame_w = dataloader.image(0).shape[:2]
-        output_path = RUN_DIR / "bg_mask_output.mp4"
-        output_path_bboxes = RUN_DIR / "bg_mask_bboxes_output.mp4"
-        output_path_comparison = RUN_DIR / "comparison_output.mp4"
-        out = cv2.VideoWriter(str(output_path), fourcc, 10, (frame_w, frame_h))
-        out_bboxes = cv2.VideoWriter(str(output_path_bboxes), fourcc, 10, (frame_w, frame_h))
-        out_comparison = cv2.VideoWriter(str(output_path_comparison), fourcc, 10, (frame_w, frame_h))
+        output_path_masks_raw = RUN_DIR / "masks_raw.mp4"
+        output_path_comparison = RUN_DIR / "comparison.mp4"
+        output_path_comparison_clean = RUN_DIR / "comparison_clean.mp4"
+        out = cv2.VideoWriter(str(output_path_masks_raw), fourcc, 10, (frame_w, frame_h))
+        out_bboxes = cv2.VideoWriter(str(output_path_comparison), fourcc, 10, (frame_w, frame_h))
+        out_comparison = cv2.VideoWriter(str(output_path_comparison_clean), fourcc, 10, (frame_w, frame_h))
 
     if args.method == "gaussian":
         gm = GaussianModelling(dataloader)
-
-        def get_mask(frame_idx: int) -> np.ndarray:
+        def get_mask(img: np.ndarray) -> np.ndarray:
             if args.adaptive:
-                return gm.compute_bg_mask_and_update(frame_idx, args.alpha, args.rho)
-            return gm.compute_bg_mask(frame_idx, args.alpha)
+                return gm.compute_bg_mask_and_update(img, args.alpha, args.rho)
+            return gm.compute_bg_mask(img, args.alpha)
     
     elif args.method == "mog2":
         subtractor = cv2.createBackgroundSubtractorMOG2(
@@ -201,8 +199,8 @@ if __name__ == '__main__':
         for i in tqdm(range(warmup_end), "Warming up MOG2 (first 25%)"):
             subtractor.apply(dataloader.image(i))
 
-        def get_mask(frame_idx: int) -> np.ndarray:
-            raw = subtractor.apply(dataloader.image(frame_idx))
+        def get_mask(img: np.ndarray) -> np.ndarray:
+            raw = subtractor.apply(img)
             return threshold_shadow_to_fg(raw)
 
     elif args.method == "lsbp":
@@ -215,8 +213,8 @@ if __name__ == '__main__':
         for i in tqdm(range(warmup_end), "Warming up LSBP (first 25%)"):
             subtractor.apply(dataloader.image(i))
 
-        def get_mask(frame_idx: int) -> np.ndarray:
-            raw = subtractor.apply(dataloader.image(frame_idx))
+        def get_mask(img: np.ndarray) -> np.ndarray:
+            raw = subtractor.apply(img)
             return threshold_shadow_to_fg(raw)
         
     else:
@@ -226,11 +224,14 @@ if __name__ == '__main__':
     # ============================================================================
     predictions = {}
 
-    for frame_idx in tqdm(range(int(dataloader.frame_count * 0.25), dataloader.frame_count - 1), 'Processing frames'):
+    for frame_idx in tqdm(range(int(dataloader.frame_count * 0.25), dataloader.frame_count), 'Processing frames'):
+
+        # Read current frame once
+        current_frame_img = dataloader.image(frame_idx)
 
         # Main processing
         # -------------------------------
-        mask = get_mask(frame_idx)
+        mask = get_mask(current_frame_img)
         mask_processed = preprocess_mask(mask, MORPH_KERNEL_SIZE_SCALED)
 
         bboxes = detect_bboxes_in_frame(
@@ -253,19 +254,41 @@ if __name__ == '__main__':
         # Optional video saving
         # -------------------------------
         if args.save_videos:
-            frame_bgr = cv2.cvtColor(dataloader.image(frame_idx), cv2.COLOR_GRAY2BGR)
+            frame_bgr = cv2.cvtColor(current_frame_img, cv2.COLOR_GRAY2BGR)
 
             # Mask video
             mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
             out.write(mask_bgr)
 
-            # Bbox video
+            # Comparison video
+            gt_bboxes = ground_truth.get(frame_idx, [])
             frame_bboxes = frame_bgr.copy()
+            frame_bboxes_f = frame_bboxes.astype(np.float32)
+
+            raw_mask_bool = mask > 0
+            if raw_mask_bool.any():
+                frame_bboxes_f[raw_mask_bool] = (
+                    0.25 * frame_bboxes_f[raw_mask_bool] + 0.75 * np.array([0, 255, 255], dtype=np.float32)
+                )
+
+            if mask_processed.ndim == 2:
+                processed_mask_bool = mask_processed > 0
+            else:
+                processed_mask_bool = np.any(mask_processed > 0, axis=2)
+            if processed_mask_bool.any():
+                frame_bboxes_f[processed_mask_bool] = (
+                    0.25 * frame_bboxes_f[processed_mask_bool] + 0.75 * np.array([0, 0, 255], dtype=np.float32)
+                )
+
+            frame_bboxes = frame_bboxes_f.astype(np.uint8)
+            for (bbox, _) in gt_bboxes:
+                x, y, w_box, h_box = bbox
+                cv2.rectangle(frame_bboxes, (x, y), (x + w_box, y + h_box), (255, 0, 0), 2)
             for (x, y, w, h) in bboxes:
                 cv2.rectangle(frame_bboxes, (x, y), (x + w, y + h), (0, 255, 0), 2)
             out_bboxes.write(frame_bboxes)
 
-            # Comparison video
+            # Comparison clean video (just GT and predicted boxes with IoU text)
             gt_bboxes   = ground_truth.get(frame_idx, [])
             pred_bboxes = predictions.get(frame_idx, [])
             frame_comparison = frame_bgr.copy()
@@ -291,9 +314,9 @@ if __name__ == '__main__':
         out.release()
         out_bboxes.release()
         out_comparison.release()
-        print(f"Saved mask video to {output_path}")
-        print(f"Saved bbox video to {output_path_bboxes}")
+        print(f"Saved mask video to {output_path_masks_raw}")
         print(f"Saved comparison video to {output_path_comparison}")
+        print(f"Saved comparison clean video to {output_path_comparison_clean}")
 
     # Evaluate
     # ============================================================================
