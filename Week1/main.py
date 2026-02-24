@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save-mask-frames", type=lambda x: x.lower() != "false", default=True, help="Save raw and processed mask frames to disk")
 
     # Scale
-    parser.add_argument("--scale", type=float, default=0.25, help="Frame resize factor to speed up experiments")
+    parser.add_argument("--scale", type=float, default=1/3, help="Frame resize factor to speed up experiments")
 
     # Tunable detection parameters
     parser.add_argument("--morph-kernel-size", type=int, default=7, help="Morphological kernel size at scale 1, must be odd")
@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--merge-distance-threshold", type=float, default=100.0, help="Pixel distance to merge nearby boxes, at scale 1")
 
     # Gaussian parameters
-    parser.add_argument("--alpha", type=float, default=6.0, help="Background subtraction threshold multiplier")
+    parser.add_argument("--alpha", type=float, default=3.0, help="Background subtraction threshold multiplier")
     parser.add_argument("--adaptive", action="store_true", help="Use adaptive Gaussian modelling instead of non-adaptive")
     parser.add_argument("--rho", type=float, default=0.01, help="Learning rate for adaptive modelling")
 
@@ -96,7 +96,7 @@ class GaussianModelling:
         threshold = alpha * (self.pixelwise_std + 2)
         mask = np.abs(image - self.pixelwise_mean) >= threshold
         return mask.astype(np.uint8) * 255
-    
+
     def compute_bg_mask_and_update(self, image: np.ndarray, alpha: float, rho: float):
         """Used for adaptive modelling"""
         image = image.astype(np.float64)
@@ -106,8 +106,10 @@ class GaussianModelling:
 
         # Update model only for background pixels
         is_bg = ~is_fg
-        self.pixelwise_mean[is_bg] = rho * image[is_bg] + (1 - rho) * self.pixelwise_mean[is_bg]
-        diff = image[is_bg] - self.pixelwise_mean[is_bg]
+        bg_pixels = image[is_bg]
+        old_mean = self.pixelwise_mean[is_bg].copy()
+        self.pixelwise_mean[is_bg] = rho * bg_pixels + (1 - rho) * old_mean
+        diff = bg_pixels - old_mean  # use old mean so std is not underestimated
         self.pixelwise_std[is_bg] = np.sqrt(rho * diff ** 2 + (1 - rho) * self.pixelwise_std[is_bg] ** 2)
 
         return mask

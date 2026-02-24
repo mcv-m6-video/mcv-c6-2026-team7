@@ -10,10 +10,17 @@ from metrics import compute_iou
 
 
 def preprocess_mask(mask: np.ndarray, morph_kernel_size: tuple) -> np.ndarray:
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, morph_kernel_size)
-    mask_opened = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    mask_closed = cv2.morphologyEx(mask_opened, cv2.MORPH_CLOSE, kernel)
-    return mask_closed
+    kh, kw = morph_kernel_size
+    # Small open: remove speckle noise without shrinking blobs too much
+    small_size = (max(1, kh // 2) | 1, max(1, kw // 2) | 1)  # keep odd
+    kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, small_size)
+    kernel_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, morph_kernel_size)
+    mask_opened = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small)
+    # Large close: fill holes inside vehicle blobs
+    mask_closed = cv2.morphologyEx(mask_opened, cv2.MORPH_CLOSE, kernel_large)
+    # Dilation: connect nearby fragments that belong to the same vehicle
+    mask_dilated = cv2.dilate(mask_closed, kernel_small, iterations=1)
+    return mask_dilated
 
 
 def merge_close_bboxes(
@@ -111,8 +118,10 @@ def detect_bboxes_in_frame(
     bboxes = []
     for contour in contours:
         x, y, w, h = cv2.boundingRect(contour)
+        if min(w, h) == 0:
+            continue
         aspect_ratio = max(w, h) / min(w, h)
-        if w * h > min_area_scaled and aspect_ratio <= max_aspect_ratio:
+        if cv2.contourArea(contour) > min_area_scaled and aspect_ratio <= max_aspect_ratio:
             bboxes.append((x, y, w, h))
 
     return merge_close_bboxes(
