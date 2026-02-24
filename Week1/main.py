@@ -132,7 +132,7 @@ if __name__ == '__main__':
     MERGE_DISTANCE_THRESHOLD_SCALED = args.merge_distance_threshold * args.scale
 
     # Create dataloader
-    dataloader = AICityFrames(scale=args.scale)
+    dataloader = AICityFrames(scale=args.scale, image_index_base=0)
     total_frames = dataloader.frame_count
     warmup_end = int(total_frames * 0.25)
     print(f"Total frames: {dataloader.frame_count}")
@@ -224,7 +224,7 @@ if __name__ == '__main__':
     # ============================================================================
     predictions = {}
 
-    for frame_idx in tqdm(range(int(dataloader.frame_count * 0.25), dataloader.frame_count - 1), 'Processing frames'):
+    for frame_idx in tqdm(range(int(dataloader.frame_count * 0.25), dataloader.frame_count), 'Processing frames'):
 
         # Read current frame once
         current_frame_img = dataloader.image(frame_idx)
