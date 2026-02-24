@@ -1,0 +1,42 @@
+program: main.py
+method: random
+metric:
+  name: mAP@0.5
+  goal: maximize
+parameters:
+  method:
+    value: lobster
+  scale:
+    value: 0.3333333333333333
+  lbsp-thresh:
+    distribution: uniform
+    min: 0.15
+    max: 0.35
+  desc-dist-thresh-offset:
+    values: [2, 3, 4, 5, 6]
+  min-color-dist-thresh:
+    value: 40
+  num-bg-samples:
+    values: [35, 50, 65]
+  num-req-bg-samples:
+    values: [1, 2, 3]
+  num-samples-for-moving-avg:
+    values: [50, 100, 150]
+  morph-kernel-size:
+    value: 7
+  min-area:
+    distribution: uniform
+    min: 1000
+    max: 3000
+  max-aspect-ratio:
+    value: 5.0
+  merge-iou-threshold:
+    value: 0.3
+  merge-distance-threshold:
+    value: 50.0
+  seed:
+    value: 42
+  save-videos:
+    value: false
+  save-mask-frames:
+    value: false
