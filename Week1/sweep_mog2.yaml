@@ -1,0 +1,38 @@
+program: main.py
+method: random
+metric:
+  name: mAP@0.5
+  goal: maximize
+parameters:
+  method:
+    value: mog2
+  scale:
+    value: 0.3333333333333333
+  mog2-history:
+    distribution: uniform
+    min: 100
+    max: 500
+  mog2-var-threshold:
+    distribution: uniform
+    min: 20.0
+    max: 28.0
+  mog2-detect-shadows:
+    value: "false"
+  morph-kernel-size:
+    value: 7
+  min-area:
+    distribution: uniform
+    min: 1500
+    max: 3000
+  max-aspect-ratio:
+    value: 5.0
+  merge-iou-threshold:
+    value: 0.3
+  merge-distance-threshold:
+    value: 50.0
+  save-videos:
+    value: false
+  save-mask-frames:
+    value: false
+  seed:
+    value: 42
