@@ -134,9 +134,6 @@ if __name__ == '__main__':
     total_frames = dataloader.frame_count
     warmup_end = int(total_frames * 0.25)
     print(f"Total frames: {dataloader.frame_count}")
-
-    # Instantiate Gaussian Modelling
-    gm = GaussianModelling(dataloader)
     
     # Build ground truth
     # ============================================================================
