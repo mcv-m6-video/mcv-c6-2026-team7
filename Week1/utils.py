@@ -170,6 +170,15 @@ def save_experiment(
             "lsbp_radius": args.lsbp_radius,
             "lsbp_t_lower": args.t_lower,
         })
+    elif args.method in ["subsense", "lobster"]:
+        params.update({
+            "lbsp_thresh": args.lbsp_thresh,
+            "desc_dist_thresh_offset": args.desc_dist_thresh_offset,
+            "min_color_dist_thresh": args.min_color_dist_thresh,
+            "num_bg_samples": args.num_bg_samples,
+            "num_req_bg_samples": args.num_req_bg_samples,
+            "num_samples_for_moving_avg": args.num_samples_for_moving_avg,
+        })
 
     experiment = {
         "run_id": run_id,
