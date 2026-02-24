@@ -91,15 +91,15 @@ class GaussianModelling:
         cv2.imwrite('bg_mean.png', mean_img)
         cv2.imwrite('bg_std.png', std_img)
     
-    def compute_bg_mask(self, image_idx: int, alpha: float):
-        image = self.dataloader.image(image_idx).astype(np.float64)
+    def compute_bg_mask(self, image: np.ndarray, alpha: float):
+        image = image.astype(np.float64)
         threshold = alpha * (self.pixelwise_std + 2)
         mask = np.abs(image - self.pixelwise_mean) >= threshold
         return mask.astype(np.uint8) * 255
     
-    def compute_bg_mask_and_update(self, image_idx: int, alpha: float, rho: float):
+    def compute_bg_mask_and_update(self, image: np.ndarray, alpha: float, rho: float):
         """Used for adaptive modelling"""
-        image = self.dataloader.image(image_idx).astype(np.float64)
+        image = image.astype(np.float64)
         threshold = alpha * (self.pixelwise_std + 2)
         is_fg = np.abs(image - self.pixelwise_mean) >= threshold # foreground
         mask = is_fg.astype(np.uint8) * 255
@@ -182,11 +182,10 @@ if __name__ == '__main__':
 
     if args.method == "gaussian":
         gm = GaussianModelling(dataloader)
-
-        def get_mask(frame_idx: int) -> np.ndarray:
+        def get_mask(img: np.ndarray) -> np.ndarray:
             if args.adaptive:
-                return gm.compute_bg_mask_and_update(frame_idx, args.alpha, args.rho)
-            return gm.compute_bg_mask(frame_idx, args.alpha)
+                return gm.compute_bg_mask_and_update(img, args.alpha, args.rho)
+            return gm.compute_bg_mask(img, args.alpha)
     
     elif args.method == "mog2":
         subtractor = cv2.createBackgroundSubtractorMOG2(
@@ -198,8 +197,8 @@ if __name__ == '__main__':
         for i in tqdm(range(warmup_end), "Warming up MOG2 (first 25%)"):
             subtractor.apply(dataloader.image(i))
 
-        def get_mask(frame_idx: int) -> np.ndarray:
-            raw = subtractor.apply(dataloader.image(frame_idx))
+        def get_mask(img: np.ndarray) -> np.ndarray:
+            raw = subtractor.apply(img)
             return threshold_shadow_to_fg(raw)
 
     elif args.method == "lsbp":
@@ -212,8 +211,8 @@ if __name__ == '__main__':
         for i in tqdm(range(warmup_end), "Warming up LSBP (first 25%)"):
             subtractor.apply(dataloader.image(i))
 
-        def get_mask(frame_idx: int) -> np.ndarray:
-            raw = subtractor.apply(dataloader.image(frame_idx))
+        def get_mask(img: np.ndarray) -> np.ndarray:
+            raw = subtractor.apply(img)
             return threshold_shadow_to_fg(raw)
         
     else:
@@ -225,9 +224,12 @@ if __name__ == '__main__':
 
     for frame_idx in tqdm(range(int(dataloader.frame_count * 0.25), dataloader.frame_count - 1), 'Processing frames'):
 
+        # Read current frame once
+        current_frame_img = dataloader.image(frame_idx)
+
         # Main processing
         # -------------------------------
-        mask = get_mask(frame_idx)
+        mask = get_mask(current_frame_img)
         mask_processed = preprocess_mask(mask, MORPH_KERNEL_SIZE_SCALED)
 
         bboxes = detect_bboxes_in_frame(
@@ -250,7 +252,7 @@ if __name__ == '__main__':
         # Optional video saving
         # -------------------------------
         if args.save_videos:
-            frame_bgr = cv2.cvtColor(dataloader.image(frame_idx), cv2.COLOR_GRAY2BGR)
+            frame_bgr = cv2.cvtColor(current_frame_img, cv2.COLOR_GRAY2BGR)
 
             # Mask video
             mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
