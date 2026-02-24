@@ -145,7 +145,7 @@ if __name__ == '__main__':
     # As stated in the instructions, we map both classes to the same one
     label_to_class = {'car': 0, 'bike': 0}
 
-    for frame_idx in range(dataloader.frame_count):
+    for frame_idx in range(warmup_end, total_frames):
         boxes = dataloader.boxes(frame_idx)
         gt_boxes = []
         for box in boxes:
