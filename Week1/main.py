@@ -176,12 +176,12 @@ if __name__ == '__main__':
     if args.save_videos:
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         frame_h, frame_w = dataloader.image(0).shape[:2]
-        output_path = RUN_DIR / "bg_mask_output.mp4"
-        output_path_bboxes = RUN_DIR / "bg_mask_bboxes_output.mp4"
-        output_path_comparison = RUN_DIR / "comparison_output.mp4"
-        out = cv2.VideoWriter(str(output_path), fourcc, 10, (frame_w, frame_h))
-        out_bboxes = cv2.VideoWriter(str(output_path_bboxes), fourcc, 10, (frame_w, frame_h))
-        out_comparison = cv2.VideoWriter(str(output_path_comparison), fourcc, 10, (frame_w, frame_h))
+        output_path_masks_raw = RUN_DIR / "masks_raw.mp4"
+        output_path_comparison = RUN_DIR / "comparison.mp4"
+        output_path_comparison_clean = RUN_DIR / "comparison_clean.mp4"
+        out = cv2.VideoWriter(str(output_path_masks_raw), fourcc, 10, (frame_w, frame_h))
+        out_bboxes = cv2.VideoWriter(str(output_path_comparison), fourcc, 10, (frame_w, frame_h))
+        out_comparison = cv2.VideoWriter(str(output_path_comparison_clean), fourcc, 10, (frame_w, frame_h))
 
     if args.method == "gaussian":
         gm = GaussianModelling(dataloader)
@@ -259,13 +259,35 @@ if __name__ == '__main__':
             mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
             out.write(mask_bgr)
 
-            # Bbox video
+            # Comparison video
+            gt_bboxes = ground_truth.get(frame_idx, [])
             frame_bboxes = frame_bgr.copy()
+            frame_bboxes_f = frame_bboxes.astype(np.float32)
+
+            raw_mask_bool = mask > 0
+            if raw_mask_bool.any():
+                frame_bboxes_f[raw_mask_bool] = (
+                    0.25 * frame_bboxes_f[raw_mask_bool] + 0.75 * np.array([0, 255, 255], dtype=np.float32)
+                )
+
+            if mask_processed.ndim == 2:
+                processed_mask_bool = mask_processed > 0
+            else:
+                processed_mask_bool = np.any(mask_processed > 0, axis=2)
+            if processed_mask_bool.any():
+                frame_bboxes_f[processed_mask_bool] = (
+                    0.25 * frame_bboxes_f[processed_mask_bool] + 0.75 * np.array([0, 0, 255], dtype=np.float32)
+                )
+
+            frame_bboxes = frame_bboxes_f.astype(np.uint8)
+            for (bbox, _) in gt_bboxes:
+                x, y, w_box, h_box = bbox
+                cv2.rectangle(frame_bboxes, (x, y), (x + w_box, y + h_box), (255, 0, 0), 2)
             for (x, y, w, h) in bboxes:
                 cv2.rectangle(frame_bboxes, (x, y), (x + w, y + h), (0, 255, 0), 2)
             out_bboxes.write(frame_bboxes)
 
-            # Comparison video
+            # Comparison clean video (just GT and predicted boxes with IoU text)
             gt_bboxes   = ground_truth.get(frame_idx, [])
             pred_bboxes = predictions.get(frame_idx, [])
             frame_comparison = frame_bgr.copy()
@@ -291,9 +313,9 @@ if __name__ == '__main__':
         out.release()
         out_bboxes.release()
         out_comparison.release()
-        print(f"Saved mask video to {output_path}")
-        print(f"Saved bbox video to {output_path_bboxes}")
+        print(f"Saved mask video to {output_path_masks_raw}")
         print(f"Saved comparison video to {output_path_comparison}")
+        print(f"Saved comparison clean video to {output_path_comparison_clean}")
 
     # Evaluate
     # ============================================================================
