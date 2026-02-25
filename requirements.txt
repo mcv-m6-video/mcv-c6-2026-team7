@@ -1,3 +1,8 @@
-opencv-contrib-python
-numpy
-tqdm
+numpy==2.4.2
+opencv_python==4.10.0.84
+pandas==1.4.2
+PyYAML==6.0
+PyYAML==6.0.3
+tqdm==4.65.0
+ultralytics==8.4.16
+wandb==0.15.3
