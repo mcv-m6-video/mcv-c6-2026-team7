@@ -10,29 +10,16 @@ from skopt.utils import use_named_args
 # Define Search Space
 # ===============================
 
-"""space = [
-    Real(0, 20.0, name="alpha"),
-    Real(1/3, 1/3, name="scale"),
-    Integer(7, 7, name="morph_kernel_size"),
-    Real(1000, 1000, name="min_area"),
-    Real(5.0, 5.0, name="max_aspect_ratio"),
-    Real(0.3, 0.3, name="merge_iou_threshold"),
-    Real(100.0, 100.0, name="merge_distance_threshold"),
-    Categorical([True], name="adaptive"),
-    Real(0.001, 0.1, name="rho"),
-    Integer(10, 10, name="num_random_ranks")
-]"""
-
 space = [
-    Categorical([5], name="alpha"),
+    Real(0.0, 20.0, name="alpha"),
     Categorical([1/3], name="scale"),
     Categorical([7], name="morph_kernel_size"),
     Categorical([1000], name="min_area"),
     Categorical([5.0], name="max_aspect_ratio"),
     Categorical([0.3], name="merge_iou_threshold"),
-    Real(10, 200, name="merge_distance_threshold"),
+    Categorical([100], name="merge_distance_threshold"),
     Categorical([True], name="adaptive"),
-    Categorical([0.06], name="rho"),
+    Real(0.001, 1, name="rho"),
     Categorical([10], name="num_random_ranks")
 ]
 
@@ -103,7 +90,7 @@ def objective(**params):
     }
 
     results.append(row)
-    pd.DataFrame(results).to_csv(r".\results\bayes_results_MAP_merge_distance_threshold.csv", index=False)
+    pd.DataFrame(results).to_csv(r".\results\bayes_results_MAP_Best_rhoalpha.csv", index=False)
 
     print("mAP:", mAP)
     #print("F1 Scor:", f1)
