@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 import os
 sys.path.insert(0, str(Path(__file__).parents[1]))
+sys.path.insert(0, str(Path(__file__).parent / "subsense_lib"))
 import argparse
 import numpy as np
 import cv2
@@ -18,6 +19,12 @@ from utils import (
     threshold_shadow_to_fg,
     save_experiment,
 )
+try:
+    from Subsense import Subsense, Lobster
+
+except ImportError:
+    Subsense = None
+    Lobster = None
 
 # Directory for raw mask frames (shared across experiments, always the same)
 MASK_FRAMES_PATH_RAW = Path("mask_frames_raw")
@@ -31,7 +38,7 @@ def parse_args() -> argparse.Namespace:
 
     # Method
     parser.add_argument("--method", type=str, default="gaussian",
-                        choices=["gaussian", "mog2", "lsbp"],
+                        choices=["gaussian", "mog2", "lsbp", "subsense", "lobster"],
                         help="Background substraction method")
 
     # Output options
@@ -61,6 +68,14 @@ def parse_args() -> argparse.Namespace:
     # LSBP parameters
     parser.add_argument("--lsbp-radius", type=int, default=16, help="Radius of the LSBP binary pattern neighbourhood (larger = more context, slower)")
     parser.add_argument("--t-lower", type=float, default=3.0, help="Lower similarity threshold: smaller values = more foreground detections")
+    
+    # SuBSENSE and LOBSTER parameters
+    parser.add_argument("--lbsp-thresh", type=float, default=0.333, help="LBSP internal threshold (relative, 0-1)")
+    parser.add_argument("--desc-dist-thresh-offset", type=int, default=3, help="LBSP descriptor distance threshold offset")
+    parser.add_argument("--min-color-dist-thresh", type=int, default=30, help="Minimum color distance threshold")
+    parser.add_argument("--num-bg-samples", type=int, default=50, help="Number of background samples per pixel")
+    parser.add_argument("--num-req-bg-samples", type=int, default=2, help="Number of required background samples for match")
+    parser.add_argument("--num-samples-for-moving-avg", type=int, default=100, help="Number of samples for moving average")
     
     # N Random Ranks
     parser.add_argument("--num-random-ranks", type=int, default=10, help="Number of random rankings (N) to average AP over")
@@ -216,6 +231,40 @@ if __name__ == '__main__':
         def get_mask(img: np.ndarray) -> np.ndarray:
             raw = subtractor.apply(img)
             return threshold_shadow_to_fg(raw)
+    
+    elif args.method == "subsense":
+        subtractor = Subsense(
+            lbsp_thresh=args.lbsp_thresh,
+            desc_dist_thresh_offset=args.desc_dist_thresh_offset,
+            min_color_dist_thresh=args.min_color_dist_thresh,
+            num_bg_samples=args.num_bg_samples,
+            num_req_bg_samples=args.num_req_bg_samples,
+            num_samples_for_moving_avg=args.num_samples_for_moving_avg,
+        )
+
+        # Warmup with first 25% of frames
+        for i in tqdm(range(warmup_end), "Warming up SuBSENSE (first 25%)"):
+            subtractor.apply(dataloader.image(i))
+
+        def get_mask(img: np.ndarray) -> np.ndarray:
+            return subtractor.apply(img)
+    
+    elif args.method == "lobster":
+        subtractor = Lobster(
+            lbsp_thresh=args.lbsp_thresh,
+            desc_dist_thresh_offset=args.desc_dist_thresh_offset,
+            min_color_dist_thresh=args.min_color_dist_thresh,
+            num_bg_samples=args.num_bg_samples,
+            num_req_bg_samples=args.num_req_bg_samples,
+            num_samples_for_moving_avg=args.num_samples_for_moving_avg,
+        )
+
+        # Warmup with first 25% of frames
+        for i in tqdm(range(warmup_end), "Warming up LOBSTER (first 25%)"):
+            subtractor.apply(dataloader.image(i))
+
+        def get_mask(img: np.ndarray) -> np.ndarray:
+            return subtractor.apply(img)
         
     else:
         raise ValueError(f"Unknown method: {args.method}")

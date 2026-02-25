@@ -13,9 +13,9 @@ OUTPUT_VIDEO = Path(__file__).parent / "output_yolo.mp4"
 
 
 def main():
-    scale = 0.25
+    scale = 1/3
     
-    dataloader = AICityFrames(scale=scale)
+    dataloader = AICityFrames(scale=scale, image_index_base=0)
     total_frames = dataloader.frame_count
     warmup_end = int(total_frames * 0.25)
     
@@ -27,7 +27,7 @@ def main():
     
     print("Building ground truth from dataloader...")
     ground_truth = {}
-    for frame_idx in range(dataloader.frame_count):
+    for frame_idx in range(warmup_end, total_frames):
         boxes = dataloader.boxes(frame_idx)
         gt_boxes = []
         for box in boxes:
@@ -73,7 +73,7 @@ def main():
     predictions = {k: v for k, v in predictions.items() if k >= warmup_end}
     
     print(f"Predictions for {len(predictions)} frames")
-    
+        
     print("Writing output video...")
     frame_h, frame_w = dataloader.image(0).shape[:2]
     if len(dataloader.image(0).shape) == 2:
@@ -81,7 +81,7 @@ def main():
         frame_h = frame_h
     out = cv2.VideoWriter(str(OUTPUT_VIDEO), cv2.VideoWriter_fourcc(*'mp4v'), 10, (frame_w, frame_h))
     
-    for frame_idx in range(warmup_end, total_frames - 1):
+    for frame_idx in range(warmup_end, total_frames):
         frame = dataloader.image(frame_idx)
         if len(frame.shape) == 2:
             frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
