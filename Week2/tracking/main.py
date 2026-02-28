@@ -13,6 +13,7 @@ from datetime import datetime
 
 from utils import repo_root_from_this_file, resolve_path, ensure_dir_for_file, render_tracked_video
 from overlap import track_by_max_overlap
+from prepare_gt_for_trackeval import MOTChallengeConverter
 
 
 # Path functions
@@ -25,8 +26,6 @@ def outputs_dir(repo_root: str, method: str) -> str:
     exp_dir = os.path.join(repo_root, "Week2", "tracking", "outputs", f"{method}_{ts}")
     os.makedirs(exp_dir, exist_ok=True)
     return exp_dir
-
-
 
 def main():
     repo_root = repo_root_from_this_file(__file__)
@@ -46,7 +45,7 @@ def main():
     
     # Outputs
     exp_dir = outputs_dir(repo_root, args.method)
-    out_csv = os.path.join(exp_dir, "tracks.csv")
+    out_txt = os.path.join(exp_dir, "tracks.txt")
     out_vid = os.path.join(exp_dir, "tracks.mp4")
 
     # Select method
@@ -56,11 +55,13 @@ def main():
             detections,
             iou_match_thr=args.iou_thr,
         )
+        # Convert to MOTChallenge format for saving
+        tracked_mot = MOTChallengeConverter.dataframe_to_motchallenge(tracked)
     # elif args.method == "kalman":
 
-    # Save CSV
-    ensure_dir_for_file(out_csv)
-    tracked.to_csv(out_csv, index=False)
+    # Save CSV as TXT for TrackEval (required format)
+    ensure_dir_for_file(out_txt)
+    tracked_mot.to_csv(out_txt, index=False, header=False)
 
     # Render video with IDs
     render_tracked_video(vid_path, tracked, out_vid, conf_thr=args.conf_thr_video, show_conf=True)
