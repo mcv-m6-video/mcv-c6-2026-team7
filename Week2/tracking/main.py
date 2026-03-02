@@ -13,6 +13,7 @@ from datetime import datetime
 
 from utils import repo_root_from_this_file, resolve_path, ensure_dir_for_file, render_tracked_video
 from overlap import track_by_max_overlap
+from kalman import execute_kalman_SORT
 from prepare_gt_for_trackeval import MOTChallengeConverter
 
 
@@ -57,7 +58,16 @@ def main():
         )
         # Convert to MOTChallenge format for saving
         tracked_mot = MOTChallengeConverter.dataframe_to_motchallenge(tracked)
-    # elif args.method == "kalman":
+    elif args.method == "kalman":
+        tracked = execute_kalman_SORT(
+            detections,
+            max_age=1,
+            min_hits=3,
+            iou_threshold=args.iou_thr,
+            show_tracks=False
+        )
+
+        tracked_mot = MOTChallengeConverter.dataframe_to_motchallenge(tracked)
 
     # Save CSV as TXT for TrackEval (required format)
     ensure_dir_for_file(out_txt)

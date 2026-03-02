@@ -9,3 +9,4 @@ wandb==0.15.3
 scikit-optimize==0.10.2
 filterpy==1.4.5
 lap==0.5.13
+trackeval==1.1.0

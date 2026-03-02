@@ -199,6 +199,7 @@ def main():
     if not tracker_results_dir.is_absolute():
         tracker_results_dir = Path(REPO_ROOT) / tracker_results_dir
     
+    print(tracker_results_dir)
     if not tracker_results_dir.exists():
         raise FileNotFoundError(f"Tracker results directory not found: {tracker_results_dir}")
     
