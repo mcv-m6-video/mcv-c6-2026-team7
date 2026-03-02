@@ -4,7 +4,11 @@ import argparse
 from pathlib import Path
 import pandas as pd
 import shutil
+import numpy as np
 
+if not hasattr(np, "float"): np.float = float
+if not hasattr(np, "int"): np.int = int
+if not hasattr(np, "bool"): np.bool = bool
 # Add repo root to path
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
