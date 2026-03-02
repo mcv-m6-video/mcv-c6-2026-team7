@@ -5,6 +5,9 @@ from pathlib import Path
 import pandas as pd
 import shutil
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 if not hasattr(np, "float"): np.float = float
 if not hasattr(np, "int"): np.int = int
@@ -193,6 +196,71 @@ def run_trackeval(
     return output_res, output_msg
 
 
+
+def plot_hota_idf1(detailed_csv: Path, tracker_name: str, output_dir: Path) -> None:
+    """
+    Read the per-alpha HOTA values and the single IDF1 value from the
+    *pedestrian_detailed.csv* that TrackEval writes, then save a figure.
+
+    The HOTA metric is evaluated at 19 IoU/alpha thresholds (0.05 – 0.95)
+    internally by TrackEval; these are the columns HOTA___5 … HOTA___95.
+    IDF1 is a single threshold-independent scalar.
+
+    The figure has two subplots:
+      - Left:  HOTA curve across all 19 alpha values.
+      - Right: IDF1 as a single horizontal reference bar.
+    """
+
+    # Alpha thresholds used internally by TrackEval's HOTA metric (np.arange(0.05, 0.99, 0.05))
+    _ALPHA_LABELS = np.round(np.arange(0.05, 0.99, 0.05), 2)   # [0.05, 0.10, ..., 0.95]
+    _ALPHA_COL_SUFFIXES = [str(int(round(a * 100))) for a in _ALPHA_LABELS]  # ['5','10',...,'95']
+    
+    df = pd.read_csv(detailed_csv)
+    # Use the COMBINED row if present, otherwise the only row
+    row = df[df["seq"] == "COMBINED"].iloc[0] if "COMBINED" in df["seq"].values else df.iloc[0]
+
+    hota_values = np.array(
+        [float(row[f"HOTA___{s}"]) * 100 for s in _ALPHA_COL_SUFFIXES]
+    )
+    idf1_value = float(row["IDF1"]) * 100
+    mean_hota  = float(np.mean(hota_values))
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig.suptitle(f"{tracker_name}", fontsize=12)
+
+    # ── Left: HOTA per alpha ────────────────────────────────────────────────
+    ax = axes[0]
+    ax.plot(_ALPHA_LABELS, hota_values, "o-", color="#4C72B0", linewidth=2, markersize=5)
+    ax.axhline(mean_hota, color="#4C72B0", linestyle="--", linewidth=1.2,
+               label=f"mean HOTA = {mean_hota:.2f}%")
+    ax.set_xlabel("IoU threshold")
+    ax.set_ylabel("HOTA (%)")
+    ax.set_title("HOTA per IoU threshold")
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0, 100)
+    ax.legend(fontsize=9)
+    ax.grid(alpha=0.4)
+
+    # ── Right: IDF1 as a single bar with the mean HOTA for comparison ──────
+    ax = axes[1]
+    bars = ax.bar(["HOTA (mean)", "IDF1"], [mean_hota, idf1_value],
+                  color=["#4C72B0", "#DD8452"], alpha=0.85, zorder=3)
+    for bar, val in zip(bars, [mean_hota, idf1_value]):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.8,
+                f"{val:.2f}%", ha="center", va="bottom", fontsize=10)
+    ax.set_ylabel("Score (%)")
+    ax.set_title("HOTA (mean) vs IDF1")
+    ax.set_ylim(0, 100)
+    ax.grid(axis="y", alpha=0.4, zorder=0)
+
+    plt.tight_layout()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out_path = output_dir / "hota_idf1.png"
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"\nPlot saved at {out_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Evaluate tracking results with TrackEval (HOTA, IDF1)"
@@ -313,7 +381,7 @@ def main():
     
     # Run TrackEval
     print(f"\nRunning evaluation...")
-    results, messages = run_trackeval(
+    run_trackeval(
         gt_folder=gt_base,
         trackers_folder=trackers_base,
         tracker_name=tracker_name,
@@ -321,9 +389,13 @@ def main():
         benchmark_name=args.benchmark_name,
         split=args.split,
     )
-    
-    print(f"Evaluation complete!")
+
+    # Plot HOTA per alpha-threshold and IDF1 from the detailed CSV TrackEval wrote
+    detailed_csv = trackers_folder / tracker_name / "pedestrian_detailed.csv"
+    plot_hota_idf1(detailed_csv, tracker_name, output_dir=tracker_results_dir)
+
     print(f"\nResults saved in: {trackers_folder / tracker_name}")
+    print(f"HOTA and IDF1 plot saved in: {tracker_results_dir / 'hota_idf1.png'}")
 
 
 if __name__ == "__main__":
