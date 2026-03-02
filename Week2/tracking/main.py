@@ -38,6 +38,12 @@ def main():
     ap.add_argument("--video", default="data/AICity_data/train/S03/c010/vdo.avi")
     ap.add_argument("--conf_thr_video", type=float, default=0.30)
     ap.add_argument("--iou_thr", type=float, default=0.40)
+
+    ### MEMORY PARAMETERS (for re-identification of lost tracks)
+    ap.add_argument("--memory_frames", type=int, default=5,
+                    help="Number of frames to keep lost tracks in memory (0 = disabled)")
+    ap.add_argument("--memory_iou_thr", type=float, default=0.90,
+                    help="Min IoU to re-identify a detection with a remembered track")
     args = ap.parse_args()
 
     # Inputs
@@ -55,6 +61,8 @@ def main():
         tracked = track_by_max_overlap(
             detections,
             iou_match_thr=args.iou_thr,
+            memory_frames=args.memory_frames,
+            memory_iou_thr=args.memory_iou_thr,
         )
         # Convert to MOTChallenge format for saving
         tracked_mot = MOTChallengeConverter.dataframe_to_motchallenge(tracked)

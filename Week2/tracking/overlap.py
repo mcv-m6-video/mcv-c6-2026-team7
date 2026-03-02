@@ -51,13 +51,30 @@ def filter_overlapping_bboxes(df_frame: pd.DataFrame, iou_dup_thr: float = 0.90,
     return df_sorted.iloc[keep].copy()
 
 
-def track_by_max_overlap(detections: pd.DataFrame, *, iou_match_thr: float = 0.40, 
-                         iou_dup_thr: float = 0.90) -> pd.DataFrame:
+def track_by_max_overlap(
+    detections: pd.DataFrame,
+    *,
+    iou_match_thr: float = 0.40,
+    iou_dup_thr: float = 0.90,
+    memory_frames: int = 5,
+    memory_iou_thr: float = 0.90,
+) -> pd.DataFrame:
     """
-    Tracking by maximum overlap (IoU) between consecutive frames:
-    - First frame: assign new track_ids
+    Tracking by maximum overlap (IoU) between consecutive frames with track memory.
+
+    - First frame: assign new track_ids.
     - Next frames: for each detection, match to prev-frame detection with max IoU.
       If best IoU >= iou_match_thr and prev not already used => inherit ID, else new ID.
+    - Memory: tracks that go unmatched are kept for up to *memory_frames* frames.
+      An unmatched detection inherits a stored track ID if the IoU between the
+      detection and the last known box is >= memory_iou_thr.
+
+    Args:
+        iou_match_thr:   Minimum IoU for frame-to-frame track continuation.
+        iou_dup_thr:     IoU threshold to suppress duplicate detections within one frame.
+        memory_frames:   How many frames a lost track is kept in memory (0 = disabled).
+        memory_iou_thr:  Minimum IoU between a new detection and a remembered box to
+                         re-use the stored track ID.
     """
 
     # Normalize and work on a copy to not modify the original
@@ -74,6 +91,9 @@ def track_by_max_overlap(detections: pd.DataFrame, *, iou_match_thr: float = 0.4
     prev_df: Optional[pd.DataFrame] = None
     out_parts: List[pd.DataFrame] = []
 
+    # Memory: track_id -> {"box": last known xyxy tuple, "age": frames since last seen}
+    track_memory: Dict[int, Dict] = {}
+
     # Loop over frames
     for f in frames:
         # Detections of current frame
@@ -83,7 +103,14 @@ def track_by_max_overlap(detections: pd.DataFrame, *, iou_match_thr: float = 0.4
         cur_df = filter_overlapping_bboxes(cur_df, iou_dup_thr=iou_dup_thr)
         cur_df["track_id"] = -1
 
-        # First frame, we assign a different track to each object on the scene
+        # ---- Age and prune memory
+        expired = [tid for tid, v in track_memory.items() if v["age"] >= memory_frames]
+        for tid in expired:
+            del track_memory[tid]
+        for mem in track_memory.values():
+            mem["age"] += 1
+
+        # First frame: assign a unique track to each detection
         if prev_df is None or prev_df.empty:
             for i in range(len(cur_df)):
                 cur_df.iloc[i, cur_df.columns.get_loc("track_id")] = next_track_id
@@ -95,8 +122,8 @@ def track_by_max_overlap(detections: pd.DataFrame, *, iou_match_thr: float = 0.4
 
         used_prev: Dict[int, bool] = {}
         prev_boxes_xyxy = prev_df[["x1", "y1", "x2", "y2"]].to_numpy(dtype=float)
+        unmatched_cur: List[int] = []  # indices into cur_df that need memory check
 
-        # Following frames: One-to-one matching
         for i in range(len(cur_df)):
             row = cur_df.iloc[i]
             cur_xywh = xyxy_to_xywh((row["x1"], row["y1"], row["x2"], row["y2"]))
@@ -124,11 +151,43 @@ def track_by_max_overlap(detections: pd.DataFrame, *, iou_match_thr: float = 0.4
                     cur_df.iloc[i, cur_df.columns.get_loc("track_id")] = int(prev_df.iloc[int(j)]["track_id"])
                     assigned = True
                     break
-            
+
             # If a new bounding box in the frame N+1 has no correspondence N then a new track label is assigned to it
             if not assigned:
+                unmatched_cur.append(i)
+
+        # ---- Memory-based re-identification for unmatched detections
+        used_memory_tids: set = set()
+        for i in unmatched_cur:
+            row = cur_df.iloc[i]
+            cur_xywh = xyxy_to_xywh((row["x1"], row["y1"], row["x2"], row["y2"]))
+
+            best_iou = memory_iou_thr - 1e-9
+            best_tid = None
+            for tid, mem in track_memory.items():
+                if tid in used_memory_tids:
+                    continue
+                iou = compute_iou(cur_xywh, xyxy_to_xywh(mem["box"]))
+                if iou > best_iou:
+                    best_iou = iou
+                    best_tid = tid
+
+            if best_tid is not None:
+                cur_df.iloc[i, cur_df.columns.get_loc("track_id")] = best_tid
+                used_memory_tids.add(best_tid)
+                del track_memory[best_tid]
+            else:
                 cur_df.iloc[i, cur_df.columns.get_loc("track_id")] = next_track_id
                 next_track_id += 1
+
+        # ---- Update memory with unmatched prev tracks
+        # Build history for tracks still active in prev_df
+        for j in range(len(prev_df)):
+            if used_prev.get(j, False):
+                continue  # was matched -> stays alive, no need for memory
+            tid = int(prev_df.iloc[j]["track_id"])
+            box = tuple(prev_df.iloc[j][["x1", "y1", "x2", "y2"]].to_numpy(dtype=float))
+            track_memory[tid] = {"box": box, "age": 0}
 
         out_parts.append(cur_df)
         prev_df = cur_df.copy()
