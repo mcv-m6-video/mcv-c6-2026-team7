@@ -1,7 +1,11 @@
+from matplotlib.pyplot import box
 import pandas as pd
 from pathlib import Path
 from typing import Optional
 
+GT_EXCLUDE_OCCLUDED = False
+GT_EXCLUDE_OUTSIDE = True
+GT_EXCLUDE_PARKED = False
 
 class MOTChallengeConverter:
     """Converter for MOTChallenge format used by TrackEval."""
@@ -87,7 +91,12 @@ class MOTChallengeConverter:
                 # Only include specified class (e.g., 'car')
                 if class_filter and box.label.lower() != class_filter.lower():
                     continue
-                
+                if GT_EXCLUDE_OCCLUDED and box.occluded == 1:
+                    continue
+                if GT_EXCLUDE_OUTSIDE and box.outside == 1:
+                    continue
+                if GT_EXCLUDE_PARKED and box.attributes.get('parked') == 'true':
+                    continue
                 # MOTChallenge format is 1-indexed for frames
                 frame_num = frame_idx + 1
                 track_id = box.track_id
@@ -97,7 +106,7 @@ class MOTChallengeConverter:
                 bb_height = box.ybr - box.ytl
                 
                 # For ground truth: conf = 1 (active), 0 (ignore)
-                conf = 1 if box.occluded == 0 else 0
+                conf = 1
                 
                 # World coordinates (not used in 2D)
                 x, y, z = -1, -1, -1
