@@ -72,6 +72,38 @@ def prepare_tracker_file(tracker_csv: Path, output_file: Path):
     print(f"Tracker file prepared: {output_file}")
 
 
+def prepare_seqinfo_file(seq_folder: Path, seq_name: str, seq_length: int, img_width: int = 1920, img_height: int = 1080):
+    """
+    Create seqinfo.ini file required by TrackEval.
+    
+    Args:
+        seq_folder: Path to sequence folder (e.g., gt_mot_format/AICity-train/S03c010)
+        seq_name: Sequence name (e.g., 'S03c010')
+        seq_length: Number of frames in the sequence
+        img_width: Image width in pixels
+        img_height: Image height in pixels
+    """
+    seqinfo_file = seq_folder / "seqinfo.ini"
+    
+    # Create seqinfo content
+    seqinfo_content = f"""[Sequence]
+name={seq_name}
+imDir=img1
+frameRate=10
+seqLength={seq_length}
+imWidth={img_width}
+imHeight={img_height}
+imExt=.jpg
+"""
+    
+    # Write seqinfo.ini
+    seqinfo_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(seqinfo_file, 'w') as f:
+        f.write(seqinfo_content)
+    
+    print(f"Created seqinfo.ini: {seqinfo_file}")
+
+
 def run_trackeval(
     gt_folder: Path,
     trackers_folder: Path,
@@ -182,6 +214,12 @@ def main():
         help="Sequence name"
     )
     parser.add_argument(
+        "--seq-length",
+        type=int,
+        default=2141,
+        help="Number of frames in the sequence (default: 2141 for AICity S03c010)"
+    )
+    parser.add_argument(
         "--benchmark-name",
         default="AICity",
         help="Benchmark name for folder structure"
@@ -238,10 +276,10 @@ def main():
     print(f"  GT folder: {gt_folder}")
     print(f"  Trackers folder: {trackers_folder}")
     
-    # Step 1: Prepare ground truth (if not already done)
+    # Prepare ground truth (if not already done)
     gt_file = gt_seq_folder / "gt" / "gt.txt"
     if not gt_file.exists():
-        print(f"\n[1/2] Converting ground truth to MOTChallenge format...")
+        print(f"\n[1/3] Converting ground truth to MOTChallenge format...")
         annotation_path = Path(REPO_ROOT) / args.gt_annotation
         MOTChallengeConverter.ground_truth_to_motchallenge(
             annotation_path=annotation_path,
@@ -250,10 +288,21 @@ def main():
             verbose=True
         )
     else:
-        print(f"\n[1/2] Ground truth already exists: {gt_file}")
+        print(f"\n[1/3] Ground truth already exists: {gt_file}")
     
-    # Step 2: Prepare tracker results
-    print(f"\n[2/2] Preparing tracker results...")
+    # Create seqinfo.ini (required by TrackEval)
+    seqinfo_file = gt_seq_folder / "seqinfo.ini"
+    if not seqinfo_file.exists():
+        print(f"\n[2/3] Creating seqinfo.ini...")
+        prepare_seqinfo_file(
+            seq_folder=gt_seq_folder,
+            seq_name=args.seq_name,
+            seq_length=args.seq_length
+        )
+    else:
+        print(f"\n[2/3] seqinfo.ini already exists: {seqinfo_file}")
+    
+    print(f"\n[3/3] Preparing tracker results...")
     tracker_output_file = tracker_data_folder / f"{args.seq_name}.txt"
     prepare_tracker_file(tracker_file, tracker_output_file)
     
