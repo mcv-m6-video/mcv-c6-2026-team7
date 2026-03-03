@@ -11,7 +11,7 @@ import argparse
 import pandas as pd
 from datetime import datetime
 
-from utils import repo_root_from_this_file, resolve_path, ensure_dir_for_file, render_tracked_video
+from utils import repo_root_from_this_file, resolve_path, ensure_dir_for_file, render_tracked_video, render_comparison_video
 from overlap import track_by_max_overlap
 from kalman import execute_kalman_SORT
 from prepare_gt_for_trackeval import MOTChallengeConverter
@@ -39,6 +39,7 @@ def main():
     ap.add_argument("--conf_thr_video", type=float, default=0.30)
     ap.add_argument("--iou_thr", type=float, default=0.40)
     ap.add_argument("--show_IDs_video", default=True)
+    ap.add_argument("--show_comp_video", default=True)
 
     ### MEMORY PARAMETERS (for re-identification of lost tracks)
     ap.add_argument("--memory_frames", type=int, default=5,
@@ -55,6 +56,7 @@ def main():
     exp_dir = outputs_dir(repo_root, args.method)
     out_txt = os.path.join(exp_dir, "tracks.txt")
     out_vid = os.path.join(exp_dir, "tracks.mp4")
+    out_cmp = os.path.join(exp_dir, "comparison.mp4")
 
     # Select method
     detections = pd.read_csv(det_path)
@@ -85,6 +87,10 @@ def main():
     # Render video with IDs
     if args.show_IDs_video:
         render_tracked_video(vid_path, tracked, out_vid, conf_thr=args.conf_thr_video, show_conf=True)
+    
+    # Render comparison video (detections vs tracks)
+    if args.show_comp_video:
+        render_comparison_video(vid_path, detections, tracked, out_cmp, conf_thr=args.conf_thr_video, show_conf=False)
 
 
 if __name__ == "__main__":
