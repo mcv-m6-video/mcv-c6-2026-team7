@@ -37,6 +37,12 @@ python data_processor.py
 
 This will read the files in `data/` and generate the `parsed_data/` folder with the ready-to-read frames in `.jpg` format.
 
+## Running the off-the-shelf model
+
+We have chosen YOLOv3 (weights `yolov3u.pt`) as our off-the-shelf model. To run this model, use `run_yolo.py`, specifying the path to the video sequence using `--source`. This script will generate an `output_video.mp4` showing the detected bounding boxes and, most importantly, a `detections.txt` file with all the detections.
+
+To evaluate the results, use `eval_yolo.py`. This script will use the `detections.txt` file and calculate the mAP@0.5, Precision, Recall, and F1, and will output a video comparing predicted and ground truth bounding boxes. This script also contains several global variables that can be modified to adjust ground truth generation.
+
 ## Tracking Evaluation
 
 ### evaluate tracking results with TrackEval
