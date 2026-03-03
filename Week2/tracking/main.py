@@ -38,6 +38,7 @@ def main():
     ap.add_argument("--video", default="data/AICity_data/train/S03/c010/vdo.avi")
     ap.add_argument("--conf_thr_video", type=float, default=0.30)
     ap.add_argument("--iou_thr", type=float, default=0.40)
+    ap.add_argument("--show_IDs_video", default=True)
 
     ### MEMORY PARAMETERS (for re-identification of lost tracks)
     ap.add_argument("--memory_frames", type=int, default=5,
@@ -82,7 +83,8 @@ def main():
     tracked_mot.to_csv(out_txt, index=False, header=False)
 
     # Render video with IDs
-    render_tracked_video(vid_path, tracked, out_vid, conf_thr=args.conf_thr_video, show_conf=True)
+    if args.show_IDs_video:
+        render_tracked_video(vid_path, tracked, out_vid, conf_thr=args.conf_thr_video, show_conf=True)
 
 
 if __name__ == "__main__":
