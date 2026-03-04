@@ -43,6 +43,39 @@ We have chosen YOLOv3 (weights `yolov3u.pt`) as our off-the-shelf model. To run 
 
 To evaluate the results, use `eval_yolo.py`. This script will use the `detections.txt` file and calculate the mAP@0.5, Precision, Recall, and F1, and will output a video comparing predicted and ground truth bounding boxes. This script also contains several global variables that can be modified to adjust ground truth generation.
 
+## Running Tracking on Object Detection
+
+Use `Week2/tracking/main.py` to track objects across frames using your detections:
+
+```bash
+python Week2/tracking/main.py \
+    --method overlap \
+    --detections Week2/detections/detections.txt
+```
+
+### Main Parameters
+
+- `--method` (overlap | kalman): Tracking algorithm to use. Default: `overlap`
+  - `overlap`: Maximum IoU-based tracking (faster, simpler)
+  - `kalman`: Kalman filter with SORT algorithm (more sophisticated)
+
+- `--detections`: Path to detections file in txt format. Default: `Week2/detections/detections.txt`. Can also be the fine-tuned detections.
+
+### Matching Parameters
+
+- `--iou_thr`: IoU threshold for detecting matches between detections and tracks. Default: `0.40`
+
+
+### Memory Parameters (Re-identification)
+
+- `--memory_frames`: Number of frames to keep lost tracks in memory for re-identification. Default: `5` (set to `0` to disable)
+
+- `--memory_iou_thr`: Minimum IoU threshold to re-identify a detection with a remembered lost track. Default: `0.90`
+
+### Output
+
+The script generates in `Week2/tracking/outputs/<method>_<timestamp>/` a .txt file; `tracks.txt`: Tracking results in MOTChallenge format
+
 ## Tracking Evaluation
 
 ### evaluate tracking results with TrackEval
