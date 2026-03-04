@@ -70,7 +70,7 @@ def main():
         tracked = execute_kalman_SORT(
             detections,
             max_age=1,
-            min_hits=3,
+            min_hits=25,
             iou_threshold=args.iou_thr,
             show_tracks=False
         )
