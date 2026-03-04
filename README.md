@@ -72,6 +72,14 @@ python Week2/tracking/main.py \
 
 - `--memory_iou_thr`: Minimum IoU threshold to re-identify a detection with a remembered lost track. Default: `0.90`
 
+### Kalman/SORT Parameters
+
+These parameters are used when `--method kalman` is selected:
+
+- `max_age`: Maximum frames a track can exist without detections before being deleted. Default: `1` (modify in code if needed)
+
+- `min_hits`: Minimum number of consecutive hits before a track is confirmed. Default: `3` (modify in code if needed)
+
 ### Output
 
 The script generates in `Week2/tracking/outputs/<method>_<timestamp>/` a .txt file; `tracks.txt`: Tracking results in MOTChallenge format
