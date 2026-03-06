@@ -59,15 +59,25 @@ def main(args):
     print(f"PEPN    : {pepn * 100:.2f}%")
     print(f"Runtime : {runtime:.2f} s")
 
-    if args.plot:
+    if args.plot or args.plot_gt:
         dt = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_dir = os.path.join("optical_flow/results", f"{args.model}_{dt}")
         os.makedirs(run_dir, exist_ok=True)
 
-        for mode in args.plot:
-            save_path = os.path.join(run_dir, f"{mode}.png")
-            plot_flow(optical_flow, mode=mode, save_path=save_path, img1=img1,
-                      alpha=args.plot_alpha, step=args.plot_step)
+        if args.plot:
+            for mode in args.plot:
+                save_path = os.path.join(run_dir, f"{mode}.png")
+                plot_flow(optical_flow, mode=mode, save_path=save_path, img1=img1,
+                          alpha=args.plot_alpha, step=args.plot_step)
+
+        if args.plot_gt:
+            gt_dir = os.path.join(run_dir, "ground_truth")
+            os.makedirs(gt_dir, exist_ok=True)
+            for mode in args.plot_gt:
+                save_path = os.path.join(gt_dir, f"{mode}.png")
+                plot_flow(gt[:, :, :2], mode=mode, save_path=save_path, img1=img1,
+                          alpha=args.plot_alpha, step=args.plot_step)
+
 
 
 if __name__ == "__main__":
@@ -80,8 +90,9 @@ if __name__ == "__main__":
     
     # Plot arguments
     parser.add_argument('--plot', nargs="+", choices=["magnitude", "color", "arrows", "quiver"], default="color", metavar="MODE")
+    parser.add_argument('--plot_gt', nargs="+", choices=["magnitude", "color", "arrows", "quiver"])
     parser.add_argument('--plot_step', type=int, default=16)
-    parser.add_argument('--plot_alpha', type=float, default=0.5)
+    parser.add_argument('--plot_alpha', type=float, default=0.9)
 
     
     args = parser.parse_args()
