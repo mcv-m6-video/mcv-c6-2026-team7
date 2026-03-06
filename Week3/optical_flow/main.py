@@ -1,13 +1,16 @@
+import os
 import cv2
 import time
 import argparse
 import numpy as np
+from datetime import datetime
 from torchvision.io import read_image
 
 from .utils import (
     read_kitti_flow,
     compute_optical_flow,
-    calculate_msen_pepn
+    calculate_msen_pepn,
+    plot_flow
 )
 
 
@@ -21,7 +24,7 @@ def evaluate_model(model: str, params: list, img1: np.ndarray, img2: np.ndarray,
     # Calculate MSEN and PEPN
     msen, pepn = calculate_msen_pepn(gt, optical_flow)
 
-    return msen, pepn, runtime
+    return msen, pepn, runtime, optical_flow
 
 
 def main(args):
@@ -49,12 +52,22 @@ def main(args):
         img1 = img1.repeat(3, 1, 1)  # (3, H, W)
         img2 = img2.repeat(3, 1, 1)  # (3, H, W)
     
-    msen, pepn, runtime = evaluate_model(args.model, params, img1, img2, gt)
+    msen, pepn, runtime, optical_flow = evaluate_model(args.model, params, img1, img2, gt)
 
     print(f"Model   : {args.model}")
     print(f"MSEN    : {msen:.4f}")
     print(f"PEPN    : {pepn * 100:.2f}%")
     print(f"Runtime : {runtime:.2f} s")
+
+    if args.plot:
+        dt = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = os.path.join("optical_flow/results", f"{args.model}_{dt}")
+        os.makedirs(run_dir, exist_ok=True)
+
+        for mode in args.plot:
+            save_path = os.path.join(run_dir, f"{mode}.png")
+            plot_flow(optical_flow, mode=mode, save_path=save_path, img1=img1,
+                      alpha=args.plot_alpha, step=args.plot_step)
 
 
 if __name__ == "__main__":
@@ -64,6 +77,12 @@ if __name__ == "__main__":
     parser.add_argument('--gt_path', help="Path to the Ground Truth stereo flow", default="data/data_stereo_flow/training/flow_noc/000045_10.png")
     parser.add_argument('--img1_path', help="Path to the first image.", default="data/data_stereo_flow/training/image_0/000045_10.png")
     parser.add_argument('--img2_path', help="Path to the second image.", default="data/data_stereo_flow/training/image_0/000045_11.png")
-    args = parser.parse_args()
+    
+    # Plot arguments
+    parser.add_argument('--plot', nargs="+", choices=["magnitude", "color", "arrows", "quiver"], default="color", metavar="MODE")
+    parser.add_argument('--plot_step', type=int, default=16)
+    parser.add_argument('--plot_alpha', type=float, default=0.5)
 
+    
+    args = parser.parse_args()
     main(args)

@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import pyflow
 import png
+
 from torchvision.models.optical_flow import Raft_Large_Weights, Raft_Small_Weights, raft_large, raft_small
 from torchvision.transforms.functional import resize
 import torchvision.transforms.functional as F
@@ -105,3 +106,119 @@ def calculate_msen_pepn(gt_flow: np.ndarray, pred_flow: np.ndarray, th: int=3) -
     pepn = float(np.mean(epe_valid > th))
 
     return msen, pepn
+
+### Optical Flow plot functions ###
+import matplotlib.pyplot as plt
+
+
+def flow_to_magnitude(flow: np.ndarray) -> np.ndarray:
+    """Returns a 2D array with the magnitude of the flow at each pixel."""
+    u, v = flow[..., 0], flow[..., 1]
+    return np.sqrt(u**2 + v**2)
+
+
+def flow_to_color(flow: np.ndarray) -> np.ndarray:
+    """Encodes flow as an HSV color image (hue=direction, value=magnitude)."""
+    u, v = flow[..., 0], flow[..., 1]
+    magnitude = np.sqrt(u**2 + v**2)
+    angle = np.arctan2(v, u)  # Range: [-pi, pi]
+
+    hsv = np.zeros((*flow.shape[:2], 3), dtype=np.uint8)
+    hsv[..., 0] = ((angle + np.pi) / (2 * np.pi) * 179).astype(np.uint8)        # Hue
+    hsv[..., 1] = 255                                                           # Saturation
+    hsv[..., 2] = cv2.normalize(magnitude, None, 0, 255, cv2.NORM_MINMAX)       # Value
+
+    return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+
+
+def _load_as_rgb(img1) -> np.ndarray:
+    """Converts img1 to a (H, W, 3) uint8 RGB array regardless of input format."""
+    img = np.array(img1)
+    # Torch tensor (C, H, W)
+    if img.ndim == 3 and img.shape[0] in (1, 3):
+        img = img.transpose(1, 2, 0)
+    # Single channel -> repeat to 3
+    if img.ndim == 2 or (img.ndim == 3 and img.shape[2] == 1):
+        img = np.squeeze(img)
+        img = np.stack([img, img, img], axis=-1)
+    # Float [0, 1] -> uint8
+    if img.dtype != np.uint8:
+        img = (img * 255).clip(0, 255).astype(np.uint8)
+    return img
+
+
+def plot_flow(flow: np.ndarray, mode: str, save_path: str, img1=None, alpha: float = 0.5, step: int = 16):
+    """
+    Saves an optical flow visualization as a plain PNG image (no axes, no title, no borders).
+    If img1 is provided, it is blended as a background behind the flow visualization.
+
+    Args:
+        flow      : (H, W, 2) array with u and v components.
+        mode      : One of 'magnitude', 'color', 'arrows', 'quiver'.
+        save_path : Path where the PNG will be saved.
+        img1      : Original image to overlay. Accepts numpy arrays or torch tensors.
+        alpha     : Opacity of the flow layer over the original image (0=only image, 1=only flow).
+        step      : Subsampling step for arrows/quiver plots.
+    """
+    u, v = flow[..., 0], flow[..., 1]
+    H, W = flow.shape[:2]
+
+    bg = _load_as_rgb(img1) if img1 is not None else None
+
+    def blend(flow_rgb: np.ndarray) -> np.ndarray:
+        if bg is None:
+            return flow_rgb
+        bg_resized = cv2.resize(bg, (W, H))
+        return cv2.addWeighted(bg_resized, 1 - alpha, flow_rgb, alpha, 0)
+
+    if mode == "magnitude":
+        mag = flow_to_magnitude(flow)
+        mag_u8 = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        flow_rgb = cv2.cvtColor(cv2.applyColorMap(mag_u8, cv2.COLORMAP_PLASMA), cv2.COLOR_BGR2RGB)
+        result = blend(flow_rgb)
+        cv2.imwrite(save_path, cv2.cvtColor(result, cv2.COLOR_RGB2BGR))
+
+    elif mode == "color":
+        flow_rgb = flow_to_color(flow)  # already RGB
+        result = blend(flow_rgb)
+        cv2.imwrite(save_path, cv2.cvtColor(result, cv2.COLOR_RGB2BGR))
+
+    elif mode == "arrows" or mode == "quiver":
+        # Use exact pixel size to avoid any rounding gaps
+        fig = plt.figure(frameon=False)
+        fig.set_size_inches(W / fig.dpi, H / fig.dpi)
+        ax = plt.Axes(fig, [0, 0, 1, 1])  # axes fills the entire figure
+        ax.set_axis_off()
+        fig.add_axes(ax)
+
+        ys = np.arange(0, H, step)
+        xs = np.arange(0, W, step)
+        X, Y = np.meshgrid(xs, ys)
+        U = u[::step, ::step]
+        V = v[::step, ::step]
+
+        # Background: original image, magnitude, or black
+        if bg is not None:
+            ax.imshow(cv2.resize(bg, (W, H)), aspect="auto")
+        elif mode == "arrows":
+            ax.imshow(flow_to_magnitude(flow), cmap="gray", aspect="auto")
+        else:
+            ax.set_facecolor("black")
+
+        if mode == "arrows":
+            magnitude = np.sqrt(U**2 + V**2)
+            ax.quiver(X, Y, U, V, magnitude, cmap="autumn_r", angles="xy",
+                      scale_units="xy", scale=1, width=0.002)
+        else:  # quiver
+            magnitude = np.sqrt(U**2 + V**2)
+            ax.quiver(X, Y, U, V, magnitude, cmap="viridis", angles="xy",
+                      scale_units="xy", scale=1)
+            ax.invert_yaxis()
+
+        ax.set_xlim(0, W)
+        ax.set_ylim(H, 0)
+        plt.savefig(save_path, dpi=fig.dpi, pad_inches=0)
+        plt.close()
+
+    else:
+        raise ValueError(f"Unknown plot mode '{mode}'. Choose from: magnitude, color, arrows, quiver.")
