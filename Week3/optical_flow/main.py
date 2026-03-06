@@ -91,8 +91,8 @@ if __name__ == "__main__":
     # Plot arguments
     parser.add_argument('--plot', nargs="+", choices=["magnitude", "color", "arrows", "quiver"], default="color", metavar="MODE")
     parser.add_argument('--plot_gt', nargs="+", choices=["magnitude", "color", "arrows", "quiver"])
-    parser.add_argument('--plot_step', type=int, default=16)
-    parser.add_argument('--plot_alpha', type=float, default=0.9)
+    parser.add_argument('--plot_step', type=int, default=12)
+    parser.add_argument('--plot_alpha', type=float, default=0.5)
 
     
     args = parser.parse_args()
