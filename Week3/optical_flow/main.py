@@ -10,8 +10,9 @@ from .utils import (
     read_kitti_flow,
     compute_optical_flow,
     calculate_msen_pepn,
-    plot_flow
 )
+
+from .plot_flow import plot_flow, PLOT_MODES
 
 
 def evaluate_model(model: str, params: list, img1: np.ndarray, img2: np.ndarray, gt: np.ndarray) -> tuple[float, float, float]:
@@ -75,7 +76,7 @@ def main(args):
             for mode in args.plot:
                 save_path = os.path.join(run_dir, f"{mode}.png")
                 plot_flow(optical_flow, mode=mode, save_path=save_path, img1=img1,
-                          alpha=args.plot_alpha, step=args.plot_step)
+                          alpha=args.plot_alpha, step=args.plot_step, gt_flow=gt)
 
         if args.plot_gt:
             gt_dir = os.path.join(run_dir, "ground_truth")
@@ -83,7 +84,7 @@ def main(args):
             for mode in args.plot_gt:
                 save_path = os.path.join(gt_dir, f"{mode}.png")
                 plot_flow(gt[:, :, :2], mode=mode, save_path=save_path, img1=img1,
-                          alpha=args.plot_alpha, step=args.plot_step)
+                          alpha=args.plot_alpha, step=args.plot_step, gt_flow=gt)
 
 
 
@@ -97,8 +98,8 @@ if __name__ == "__main__":
     parser.add_argument('--img2_path', help="Path to the second image.", default="data/data_stereo_flow/training/image_0/000045_11.png")
     
     # Plot arguments
-    parser.add_argument('--plot', nargs="+", choices=["magnitude", "color", "arrows", "quiver"], default=["color"], metavar="MODE")
-    parser.add_argument('--plot_gt', nargs="+", choices=["magnitude", "color", "arrows", "quiver"])
+    parser.add_argument('--plot', nargs="+", choices=PLOT_MODES, default=["color"], metavar="MODE")
+    parser.add_argument('--plot_gt', nargs="+", choices=PLOT_MODES)
     parser.add_argument('--plot_step', type=int, default=12)
     parser.add_argument('--plot_alpha', type=float, default=0.5)
 
