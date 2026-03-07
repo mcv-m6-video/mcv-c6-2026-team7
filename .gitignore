@@ -9,5 +9,6 @@ parsed_data
 results
 outputs
 detections
+external/flowformerpp/checkpoints/
 
 .DS_Store
