@@ -37,7 +37,7 @@ def extract_frames(video_path: Path, output_dir: Path, *, clean_output: bool = T
     return frame_idx + 1
 
 
-@dataclass(slots=True)
+@dataclass
 class BoundingBox:
     frame: int
     xtl: float
