@@ -67,33 +67,6 @@ def _make_fig(W: int, H: int):
     fig.add_axes(ax)
     return fig, ax
 
-COLORSCALE_MODES = ["colorbar", "text", "separate"]
-
-def save_colorscale(image_bgr: np.ndarray, scalar_map: np.ndarray, cmap_cv2: int,
-                    base_path: str, colorscale: list, label: str = ""):
-    """
-    Generates one or more color scale visualizations alongside the main image.
-
-    Args:
-        image_bgr   : The already-rendered BGR image.
-        scalar_map  : Raw float 2D array (used for min/max).
-        cmap_cv2    : OpenCV colormap constant (e.g. cv2.COLORMAP_HOT).
-        base_path   : Path of the main image (e.g. results/error.png).
-        colorscale  : List of modes: 'colorbar', 'text', 'separate'.
-        label       : Label string shown on the scale (e.g. 'EPE (px)').
-    """
-    stem = base_path.replace(".png", "")
-
-    if "colorbar" in colorscale:
-        _colorscale_colorbar(image_bgr, scalar_map, cmap_cv2,
-                             f"{stem}_colorbar.png", label)
-    if "text" in colorscale:
-        _colorscale_text(image_bgr, scalar_map,
-                         f"{stem}_text.png", label)
-    if "separate" in colorscale:
-        _colorscale_separate(scalar_map, cmap_cv2,
-                             f"{stem}_scale.png", label)
-
 
 
 PLOT_MODES = ["magnitude", "color", "arrows", "quiver", "error"]
