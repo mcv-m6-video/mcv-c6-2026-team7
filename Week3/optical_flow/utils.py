@@ -8,6 +8,13 @@ from torchvision.models.optical_flow import Raft_Large_Weights, Raft_Small_Weigh
 from torchvision.transforms.functional import resize
 import torchvision.transforms.functional as F
 
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../external/flowformerpp"))
+from configs.kitti import get_cfg
+from core.FlowFormer import build_flowformer
+from core.utils.utils import InputPadder as FlowFormerInputPadder
+
 
 class InputPadder:
     """Pads images such that dimensions are divisible by 8. Used for RAFT"""
@@ -91,6 +98,34 @@ def compute_optical_flow(model: str, params: list, img1: np.ndarray, img2: np.nd
         flow = predicted_flows[0].cpu().detach().numpy().transpose(1, 2, 0)  # Shape: (H, W, 2)
 
         return flow
+    
+    elif model == "flowformer_pp":
+        cfg = get_cfg()
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model_nn = build_flowformer(cfg).to(device)
+        
+        # Load checkpoint manually
+        checkpoint = torch.load(params[0], map_location=device)
+
+        # Strip 'module.' prefix from DataParallel checkpoint
+        checkpoint = {k.replace("module.", "", 1): v for k, v in checkpoint.items()}
+
+        model_nn.load_state_dict(checkpoint, strict=True)
+        
+        model_nn.eval()
+
+        img1_t = img1.unsqueeze(0).float().to(device)
+        img2_t = img2.unsqueeze(0).float().to(device)
+
+        padder = FlowFormerInputPadder(img1_t.shape)
+        img1_t, img2_t = padder.pad(img1_t, img2_t)
+
+        with torch.no_grad():
+            flow_predictions = model_nn(img1_t, img2_t)
+
+        flow = padder.unpad(flow_predictions[0])  # (1, 2, H, W)
+        return flow[0].cpu().numpy().transpose(1, 2, 0)  # (H, W, 2)
 
 
 def calculate_msen_pepn(gt_flow: np.ndarray, pred_flow: np.ndarray, th: int=3) -> float:

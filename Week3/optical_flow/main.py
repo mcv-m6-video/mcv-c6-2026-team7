@@ -52,6 +52,13 @@ def main(args):
         img1 = img1.repeat(3, 1, 1)  # (3, H, W)
         img2 = img2.repeat(3, 1, 1)  # (3, H, W)
     
+    elif args.model == "flowformer_pp":
+        params = [args.flowformer_ckpt]
+        img1 = read_image(args.img1_path)
+        img2 = read_image(args.img2_path)
+        img1 = img1.repeat(3, 1, 1)
+        img2 = img2.repeat(3, 1, 1)
+    
     msen, pepn, runtime, optical_flow = evaluate_model(args.model, params, img1, img2, gt)
 
     print(f"Model   : {args.model}")
@@ -83,13 +90,14 @@ def main(args):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', choices=["pyflow", "raft_large", "raft_small"], default="pyflow")
+    parser.add_argument('--model', choices=["pyflow", "raft_large", "raft_small", "flowformer_pp"], default="pyflow")
+    parser.add_argument('--flowformer_ckpt', default="external/flowformerpp/checkpoints/kitti.pth")
     parser.add_argument('--gt_path', help="Path to the Ground Truth stereo flow", default="data/data_stereo_flow/training/flow_noc/000045_10.png")
     parser.add_argument('--img1_path', help="Path to the first image.", default="data/data_stereo_flow/training/image_0/000045_10.png")
     parser.add_argument('--img2_path', help="Path to the second image.", default="data/data_stereo_flow/training/image_0/000045_11.png")
     
     # Plot arguments
-    parser.add_argument('--plot', nargs="+", choices=["magnitude", "color", "arrows", "quiver"], default="color", metavar="MODE")
+    parser.add_argument('--plot', nargs="+", choices=["magnitude", "color", "arrows", "quiver"], default=["color"], metavar="MODE")
     parser.add_argument('--plot_gt', nargs="+", choices=["magnitude", "color", "arrows", "quiver"])
     parser.add_argument('--plot_step', type=int, default=12)
     parser.add_argument('--plot_alpha', type=float, default=0.5)
