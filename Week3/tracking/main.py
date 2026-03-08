@@ -42,7 +42,7 @@ def main():
     ap.add_argument("--show_comp_video", default=True)
 
     ### MEMORY PARAMETERS (for re-identification of lost tracks)
-    ap.add_argument("--memory_frames", type=int, default=5,
+    ap.add_argument("--memory_frames", type=int, default=20,
                     help="Number of frames to keep lost tracks in memory (0 = disabled)")
     ap.add_argument("--memory_iou_thr", type=float, default=0.4,
                     help="Min IoU to re-identify a detection with a remembered track")
