@@ -202,10 +202,9 @@ def track_by_max_overlap(
 def np_to_torch_img(array: np.ndarray):
     return torch.from_numpy(array).permute(2, 0, 1)  # uint8 [0, 255]
 
-def flow_shift_box(box, flow, scale):
+def flow_shift_box(box, flow, scale, mag_thresh: float = 0.5):
     x1, y1, x2, y2 = box
 
-    # scale box to flow resolution
     x1s = int(x1 * scale)
     y1s = int(y1 * scale)
     x2s = int(x2 * scale)
@@ -218,7 +217,6 @@ def flow_shift_box(box, flow, scale):
     y1s = np.clip(y1s, 0, h-1)
     y2s = np.clip(y2s, 0, h-1)
 
-    # use the inner ~50% of the box
     cx, cy = (x1s + x2s) // 2, (y1s + y2s) // 2
     rw, rh = (x2s - x1s) // 4, (y2s - y1s) // 4
     region = flow[max(cy-rh,0):cy+rh, max(cx-rw,0):cx+rw]
@@ -226,8 +224,14 @@ def flow_shift_box(box, flow, scale):
     if region.size == 0:
         return box
 
-    dx = np.median(region[..., 0]) / scale
-    dy = np.median(region[..., 1]) / scale
+    mag = np.sqrt(region[...,0]**2 + region[...,1]**2)
+    valid_mask = mag >= mag_thresh
+    
+    if not np.any(valid_mask):
+        return box
+    
+    dx = np.median(region[..., 0][valid_mask]) / scale
+    dy = np.median(region[..., 1][valid_mask]) / scale
 
     return (
         x1 + dx,
@@ -254,7 +258,7 @@ def flow_to_rgb(flow: np.ndarray, mag_thresh: float = 1.0) -> np.ndarray:
     rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
     return rgb
 
-def draw_bbox_flow(frame: np.ndarray, flow: np.ndarray, boxes: np.ndarray) -> np.ndarray:
+def draw_bbox_flow(frame: np.ndarray, flow: np.ndarray, boxes: np.ndarray, mag_thresh: float = 0.5) -> np.ndarray:
     """
     Draw arrows representing median flow inside each bounding box.
     - frame: original frame (HxWx3)
@@ -264,20 +268,24 @@ def draw_bbox_flow(frame: np.ndarray, flow: np.ndarray, boxes: np.ndarray) -> np
     vis = frame.copy()
     for box in boxes:
         x1, y1, x2, y2 = map(int, box)
-        # Extract flow inside bbox
         region_flow = flow[y1:y2, x1:x2]
         if region_flow.size == 0:
             continue
-        # Compute median flow vector
-        dx = np.median(region_flow[...,0])
-        dy = np.median(region_flow[...,1])
-        # Draw arrow at center of bbox
+        mag = np.sqrt(region_flow[...,0]**2 + region_flow[...,1]**2)
+        valid_mask = mag >= mag_thresh
+        if not np.any(valid_mask):
+            continue
+        dx = np.median(region_flow[...,0][valid_mask])
+        dy = np.median(region_flow[...,1][valid_mask])
         cx = int((x1+x2)/2)
         cy = int((y1+y2)/2)
-        tip = (int(cx+dx*10), int(cy+dy*10))  # scale for visibility
-        cv2.arrowedLine(vis, (cx,cy), tip, (0,0,255), 2, tipLength=0.3)
-        # Optional: draw bbox
         cv2.rectangle(vis, (x1,y1), (x2,y2), (0,255,0), 2)
+        magnitude = np.sqrt(dx**2 + dy**2)
+        if magnitude < 0.5:
+            continue
+        arrow_len = 30
+        tip = (int(cx + dx / magnitude * arrow_len), int(cy + dy / magnitude * arrow_len))
+        cv2.arrowedLine(vis, (cx, cy), tip, (0, 0, 255), 2, tipLength=0.3)
     return vis
 
 def track_by_max_overlap_flow(
@@ -288,9 +296,9 @@ def track_by_max_overlap_flow(
     iou_dup_thr: float = 0.90,
     memory_frames: int = 5,
     memory_iou_thr: float = 0.90,
-    resize_flow_scale: float = 0.25,
-    flow_frame_interval: int = 10,
-    flow_dir: str = "flow_frames"
+    resize_flow_scale: float = 1,
+    flow_frame_interval: int = 1,
+    flow_dir: str = "flow_frames_tracking"
 ) -> pd.DataFrame:
     """
     Tracking with memory + save selected scaled optical flow frames as images.
@@ -333,6 +341,7 @@ def track_by_max_overlap_flow(
             flow = compute_optical_flow("raft_small", [], prev_frame_resized, frame_resized)
         prev_frame_resized = frame_resized
 
+        ''' DEBUGGING
         # ---- Save denoised flow image every N frames
         if flow is not None and (f % flow_frame_interval == 0):
             # Resize flow to original frame size and scale values to full-res pixel units
@@ -340,15 +349,15 @@ def track_by_max_overlap_flow(
           
             # Create an empty image
             flow_image = np.zeros_like(frame)
-            flow_image = flow_to_rgb(flow_vis, mag_thresh=0.4)
+            flow_image = flow_to_rgb(flow_vis, mag_thresh=0.5)
 
-            '''# Mask flow inside bounding boxes
+            # Mask flow inside bounding boxes
             for _, row in cur_df.iterrows():
                 x1, y1, x2, y2 = map(int, row[["x1","y1","x2","y2"]])
                 flow_crop = flow_vis[y1:y2, x1:x2]
                 rgb_crop = flow_to_rgb(flow_crop, mag_thresh=0)
                 flow_image[y1:y2, x1:x2] = rgb_crop
-            '''
+            
             # Save image
             fname = os.path.join(flow_dir, f"frame_{f:05d}_flow.png")
             cv2.imwrite(fname, flow_image)
@@ -360,7 +369,8 @@ def track_by_max_overlap_flow(
             # Save
             fname = os.path.join(flow_dir, f"frame_{f:05d}_bboxes_flow.png")
             cv2.imwrite(fname, flow_image)
-
+        '''
+        
         # ---- Age and prune memory
         expired = [tid for tid, v in track_memory.items() if v["age"] >= memory_frames]
         for tid in expired:
@@ -379,6 +389,13 @@ def track_by_max_overlap_flow(
 
         used_prev: dict[int, bool] = {}
         prev_boxes_xyxy = prev_df[["x1", "y1", "x2", "y2"]].to_numpy(dtype=float)
+
+        # Warp previous boxes using optical flow to predict their position in current frame
+        if flow is not None:
+            prev_boxes_xyxy = np.array([
+                flow_shift_box(tuple(pb), flow, resize_flow_scale)
+                for pb in prev_boxes_xyxy
+            ])
 
         unmatched_cur: list[int] = []
         for i in range(len(cur_df)):
