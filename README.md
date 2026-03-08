@@ -60,9 +60,10 @@ Additionally, there are some particularities to take into account:
 
 ### Particularities of executing PyFlow
 
-To compile the files, execute
+To compile the files, execute from the root of the repository
 ```
-python external/pyflow/setup.py build_ext -i
+cd external/pyflow
+python setup.py build_ext -i
 ```
 
 Then, to be able to import them from a Python script:
