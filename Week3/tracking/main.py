@@ -12,7 +12,7 @@ import pandas as pd
 from datetime import datetime
 
 from utils import repo_root_from_this_file, resolve_path, ensure_dir_for_file, render_tracked_video, render_comparison_video
-from overlap import track_by_max_overlap
+from overlap import track_by_max_overlap, track_by_max_overlap_flow
 from kalman import execute_kalman_SORT
 from prepare_gt_for_trackeval import MOTChallengeConverter
 
@@ -33,7 +33,7 @@ def main():
     add_repo_root_to_syspath(repo_root)
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--method", choices=["overlap", "kalman"], default="overlap")
+    ap.add_argument("--method", choices=["overlap", "kalman", "overlap_flow"], default="overlap")
     ap.add_argument("--detections", default="Week2/detections/detections.txt")
     ap.add_argument("--video", default="data/AICity_data/train/S03/c010/vdo.avi")
     ap.add_argument("--conf_thr_video", type=float, default=0.30)
@@ -44,7 +44,7 @@ def main():
     ### MEMORY PARAMETERS (for re-identification of lost tracks)
     ap.add_argument("--memory_frames", type=int, default=5,
                     help="Number of frames to keep lost tracks in memory (0 = disabled)")
-    ap.add_argument("--memory_iou_thr", type=float, default=0.90,
+    ap.add_argument("--memory_iou_thr", type=float, default=0.4,
                     help="Min IoU to re-identify a detection with a remembered track")
     args = ap.parse_args()
 
@@ -67,7 +67,17 @@ def main():
             memory_frames=args.memory_frames,
             memory_iou_thr=args.memory_iou_thr,
         )
-        # Convert to MOTChallenge format for saving
+
+        tracked_mot = MOTChallengeConverter.dataframe_to_motchallenge(tracked)
+    elif args.method == "overlap_flow":
+        tracked = track_by_max_overlap_flow(
+            detections,
+            iou_match_thr=args.iou_thr,
+            memory_frames=args.memory_frames,
+            memory_iou_thr=args.memory_iou_thr,
+            video_path=vid_path
+        )
+
         tracked_mot = MOTChallengeConverter.dataframe_to_motchallenge(tracked)
     elif args.method == "kalman":
         tracked = execute_kalman_SORT(
