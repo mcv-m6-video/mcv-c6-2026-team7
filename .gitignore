@@ -10,5 +10,6 @@ results
 outputs
 detections
 external/flowformerpp/checkpoints/
+flow_cache/
 
 .DS_Store

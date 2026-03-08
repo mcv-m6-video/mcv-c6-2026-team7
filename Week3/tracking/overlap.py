@@ -288,6 +288,15 @@ def draw_bbox_flow(frame: np.ndarray, flow: np.ndarray, boxes: np.ndarray, mag_t
         cv2.arrowedLine(vis, (cx, cy), tip, (0, 0, 255), 2, tipLength=0.3)
     return vis
 
+def get_flow_cache_dir(video_path: str, scale: float, model: str = "raft_small") -> str:
+    """
+    Create a cache directory path based on video name, model and scale.
+    """
+    video_name = os.path.splitext(os.path.basename(video_path))[0]
+    cache_dir = os.path.join("flow_cache", video_name, f"{model}_scale_{scale}")
+    os.makedirs(cache_dir, exist_ok=True)
+    return cache_dir
+
 def track_by_max_overlap_flow(
     detections: pd.DataFrame,
     video_path: str,
@@ -303,6 +312,7 @@ def track_by_max_overlap_flow(
     """
     Tracking with memory + save selected scaled optical flow frames as images.
     Flow is masked inside bounding boxes and denoised.
+    Optical flow is cached to disk to avoid recomputation.
     """
 
     det = detections.copy()
@@ -321,6 +331,10 @@ def track_by_max_overlap_flow(
 
     os.makedirs(flow_dir, exist_ok=True)
 
+    # Prepare cache directory for optical flow
+    flow_cache_dir = get_flow_cache_dir(video_path, resize_flow_scale, model="raft_small")
+    prev_f = None  # store previous frame id for cache filename
+
     for f in tqdm(frames):
         cur_df = det[det["frame_id"] == f].copy()
         cur_df = filter_overlapping_bboxes(cur_df, iou_dup_thr=iou_dup_thr)
@@ -337,9 +351,22 @@ def track_by_max_overlap_flow(
         frame_resized = np_to_torch_img(cv2.resize(frame_rgb, new_dim, interpolation=cv2.INTER_AREA))
 
         flow = None
-        if prev_frame_resized is not None:
-            flow = compute_optical_flow("raft_small", [], prev_frame_resized, frame_resized)
+        if prev_frame_resized is not None and prev_f is not None:
+            # Build cache filename for flow between prev_f and f
+            flow_file = os.path.join(flow_cache_dir, f"flow_{prev_f:06d}_{f:06d}.npy")
+            if os.path.exists(flow_file):
+                # Load cached flow
+                flow = np.load(flow_file)
+            else:
+                # Compute and save
+                flow = compute_optical_flow("raft_small", [], prev_frame_resized, frame_resized)
+                # Ensure flow is a numpy array (convert if it's a torch tensor)
+                if isinstance(flow, torch.Tensor):
+                    flow = flow.cpu().numpy()
+                np.save(flow_file, flow)
+
         prev_frame_resized = frame_resized
+        prev_f = f
 
         ''' DEBUGGING
         # ---- Save denoised flow image every N frames
