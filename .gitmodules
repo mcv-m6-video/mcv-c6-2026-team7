@@ -7,3 +7,6 @@
 [submodule "external/flowformerpp"]
 	path = external/flowformerpp
 	url = https://github.com/XiaoyuShi97/FlowFormerPlusPlus.git
+[submodule "external/deep_sort"]
+	path = external/deep_sort
+	url = https://github.com/nwojke/deep_sort.git
