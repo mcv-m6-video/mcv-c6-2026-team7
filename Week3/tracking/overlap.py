@@ -301,6 +301,7 @@ def track_by_max_overlap_flow(
     detections: pd.DataFrame,
     video_path: str,
     *,
+    model: str = "raft_small",
     iou_match_thr: float = 0.40,
     iou_dup_thr: float = 0.90,
     memory_frames: int = 5,
@@ -332,7 +333,7 @@ def track_by_max_overlap_flow(
     os.makedirs(flow_dir, exist_ok=True)
 
     # Prepare cache directory for optical flow
-    flow_cache_dir = get_flow_cache_dir(video_path, resize_flow_scale, model="raft_small")
+    flow_cache_dir = get_flow_cache_dir(video_path, resize_flow_scale, model=model)
     prev_f = None  # store previous frame id for cache filename
 
     for f in tqdm(frames):
@@ -359,7 +360,7 @@ def track_by_max_overlap_flow(
                 flow = np.load(flow_file)
             else:
                 # Compute and save
-                flow = compute_optical_flow("raft_small", [], prev_frame_resized, frame_resized)
+                flow = compute_optical_flow(model, [], prev_frame_resized, frame_resized)
                 # Ensure flow is a numpy array (convert if it's a torch tensor)
                 if isinstance(flow, torch.Tensor):
                     flow = flow.cpu().numpy()
