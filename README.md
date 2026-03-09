@@ -68,7 +68,7 @@ python setup.py build_ext -i
 
 Then, to be able to import them from a Python script:
 ```
--m pip install -e external/pyflow --no-build-isolation
+python -m pip install -e external/pyflow --no-build-isolation
 ```
 
 Also, importantly, **if the files are compiled using Windows**, it's necessary to comment line 9 of `external/pyflow/src/project.h`.
