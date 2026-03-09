@@ -15,6 +15,7 @@ from utils import repo_root_from_this_file, resolve_path, ensure_dir_for_file, r
 from overlap import track_by_max_overlap, track_by_max_overlap_flow
 from kalman import execute_kalman_SORT
 from deep_sort_runner import execute_deep_SORT
+from deep_sort_flow import execute_deep_SORT_flow
 from prepare_gt_for_trackeval import MOTChallengeConverter
 
 # Path functions
@@ -33,7 +34,7 @@ def main():
     add_repo_root_to_syspath(repo_root)
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--method", choices=["overlap", "kalman", "overlap_flow", "deep_SORT"], default="overlap")
+    ap.add_argument("--method", choices=["overlap", "kalman", "overlap_flow", "deep_SORT", "deep_SORT_flow"], default="overlap")
     ap.add_argument("--detections", default="Week2/detections/detections.txt")
     ap.add_argument("--video", default="data/AICity_data/train/S03/c010/vdo.avi")
     ap.add_argument("--conf_thr_video", type=float, default=0.30)
@@ -93,6 +94,21 @@ def main():
     elif args.method == "deep_SORT":
         tracked = execute_deep_SORT(
             detections,
+            max_age=15,
+            min_hits=30,
+            iou_threshold=0.65,
+            show_tracks=False,
+            nms_max_overlap=0.9,
+            max_cosine_distance=0.5,
+            nn_budget=122
+        )
+
+        tracked_mot = MOTChallengeConverter.dataframe_to_motchallenge(tracked)
+    
+    elif args.method == "deep_SORT_flow":
+        tracked = execute_deep_SORT_flow(
+            detections,
+            video_path=vid_path,
             max_age=15,
             min_hits=30,
             iou_threshold=0.65,
