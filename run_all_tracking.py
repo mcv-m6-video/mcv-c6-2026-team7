@@ -87,22 +87,6 @@ def discover_cameras(data_root: Path) -> list[tuple[Path, str, str]]:
 #  Helper – count frames in a video
 # ═════════════════════════════════════════════════════════════════════════════
 
-def seq_length_from_gt(gt_txt: Path) -> int | None:
-    """Read the max frame number from gt.txt (1-based MOT format)."""
-    try:
-        max_frame = 0
-        with open(gt_txt) as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split(",")
-                if parts:
-                    max_frame = max(max_frame, int(float(parts[0])))
-        return max_frame if max_frame > 0 else None
-    except Exception:
-        return None
-
 
 def count_frames(video_path: Path) -> int:
     """Fallback: ask OpenCV for the frame count."""
@@ -116,17 +100,53 @@ def count_frames(video_path: Path) -> int:
         return 2141   # last-resort fallback
 
 
-def get_seq_length(gt_txt: Path, video_path: Path) -> int:
+def seq_length_from_file(txt_path: Path) -> int | None:
+    """Read the max frame number from any MOT-format txt file."""
+    try:
+        max_frame = 0
+        with open(txt_path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(",")
+                if parts:
+                    max_frame = max(max_frame, int(float(parts[0])))
+        return max_frame if max_frame > 0 else None
+    except Exception:
+        return None
+
+
+# ← replace the old seq_length_from_gt + get_seq_length with these two:
+
+def seq_length_from_gt(gt_txt: Path) -> int | None:
+    return seq_length_from_file(gt_txt)
+
+
+def get_seq_length(gt_txt: Path, video_path: Path, tracker_txt: Path | None = None) -> int:
     """
-    Determine sequence length reliably.
-    Priority: max frame in gt.txt  >  OpenCV frame count  >  hardcoded fallback.
-    Using the GT max-frame guarantees seqinfo.ini never under-counts, which
-    would cause TrackEval to reject valid tracker detections.
+    Take the MAX of:
+      1. max frame in gt.txt
+      2. max frame in tracker output (tracks.txt), if available
+      3. OpenCV frame count
+    This prevents seqinfo.ini from under-counting when annotations
+    end before the video does, causing TrackEval to reject valid frames.
     """
-    from_gt = seq_length_from_gt(gt_txt)
+    candidates = []
+
+    from_gt = seq_length_from_file(gt_txt)
     if from_gt:
-        return from_gt
-    return count_frames(video_path)
+        candidates.append(from_gt)
+
+    if tracker_txt and tracker_txt.exists():
+        from_tracker = seq_length_from_file(tracker_txt)
+        if from_tracker:
+            candidates.append(from_tracker)
+
+    from_cv = count_frames(video_path)
+    candidates.append(from_cv)
+
+    return max(candidates)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -442,7 +462,7 @@ def main() -> None:
     ap.add_argument("--benchmark-name", default="AICity")
     ap.add_argument("--split", default="train")
     ap.add_argument("--methods", nargs="+",
-                    default=["overlap", "kalman", "overlap_flow"],
+                    default=["overlap", "kalman"],
                     choices=["overlap", "kalman", "overlap_flow", "deep_SORT", "deep_SORT_flow"])
     args = ap.parse_args()
 
@@ -472,8 +492,8 @@ def main() -> None:
             print(f"  [SKIP] GT file not found: {gt_txt}")
             continue
 
-        seq_length = get_seq_length(gt_txt, video_path)
-        print(f"  Frames (seq_length): {seq_length}")
+        base_seq_length = get_seq_length(gt_txt, video_path)
+        print(f"  Frames (baseline seq_length): {base_seq_length}")
 
         seq_cam     = f"{seq_name}_{cam_name}"
         cam_out_dir = out_root / seq_cam
@@ -524,7 +544,12 @@ def main() -> None:
                 if result_dir is None:
                     print(f"    [SKIP] Tracking failed for {label}")
                     continue
-
+                
+                # Recompute seq_length now that we have the tracker output,
+                # so seqinfo.ini covers every frame the tracker actually produced.
+                tracks_txt = result_dir / "tracks.txt"
+                seq_length = get_seq_length(gt_txt, video_path, tracker_txt=tracks_txt)
+                
                 # ── evaluate ─────────────────────────────────────────────────
                 metrics = run_evaluation(
                     repo_root=repo_root,
