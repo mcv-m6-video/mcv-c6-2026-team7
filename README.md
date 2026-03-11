@@ -82,4 +82,29 @@ Also, importantly, make sure the Python library `timm` is installed using versio
 pip install timm==0.4.12
 ```
 
+## Running `run_all_tracking.py`
+This script executes all the tracking methods you pass by argument on the detection files that you give it by argument so we could work over all the sequences and cameras in only one execution. It can be executed as:
+
+```
+python run_all_tracking.py --data-root --repo-root --gt-xml
+
+```
+And it assumes your files follow the next structure from ```--data-root```:
+```
+ <seq>/          e.g.  S01/  S03/  S04/
+   <cam>/        e.g.  c001/ c002/ c010/
+      vdo.avi
+      det/
+      det.txt           # dataset detections
+      gt/
+         gt.txt            
+
+```
+
+Then to get a summary of the tracking results (mean, best method, barplots of yolo, etc.) you can use ```summarize_results_tracking.py``` that requires the next arguments:
+
+```
+python summarize_results_tracking.py --result-root --output-csv --plots-dir
+```
+
 
