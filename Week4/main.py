@@ -37,6 +37,7 @@ from finetuning.kfold_cross_validation import main as kfold_main
 from tracking.main import main as tracking_main
 from tracking.eval_tracking import main as eval_tracking_main
 from tracking.summarize_results_tracking import main as summarize_results_main
+from tracking.run_all_tracking import main as run_all_tracking_main
 
 # YOLO inference — only used when detections.mode is "yolo"
 from ultralytics import YOLO
@@ -267,10 +268,47 @@ def stage_single_cam_tracking(cfg: dict, detections_path: str):
 # ===========================================================================
 # STAGE 4 — Multi-camera tracking   <<<  WEEK 4  >>>
 # ===========================================================================
+def stage_run_all_tracking(cfg: dict) -> None:
+    """
+    Stage 3b — Run all single-camera trackings across every camera in a
+    multi-camera sequence.  Discovers cameras automatically from data_root,
+    runs each configured method × detection source, evaluates with TrackEval
+    and writes per-camera summary CSVs + comparison plots.
+
+    Designed to be called:
+      (a) standalone via Stage 3b when stages.run_all_tracking is true, OR
+      (b) as a pre-step inside stage_multi_cam_tracking before the multi-cam
+          method runs (to ensure per-camera tracks exist).
+    """
+    ra  = cfg["run_all_tracking"]
+    log.info("--- STAGE 3b | Run-All Single-Camera Tracking ---")
+    log.info("  data_root  : %s", ra["data_root"])
+    log.info("  output_dir : %s", ra["output_dir"])
+    log.info("  methods    : %s", ra["methods"])
+
+    run_all_tracking_main(SimpleNamespace(
+        data_root          = ra["data_root"],
+        repo_root          = ra["repo_root"],
+        output_dir         = ra["output_dir"],
+        detections_subpath = ra.get("detections_subpath", "det"),
+        gt_subpath         = ra.get("gt_subpath", "gt/gt.txt"),
+        benchmark_name     = ra.get("benchmark_name", "AICity"),
+        split              = ra.get("split", "train"),
+        methods            = ra["methods"],
+    ))
+    log.info("Run-all tracking complete.")
+
+
 def stage_multi_cam_tracking(cfg: dict):
     mc = cfg["multi_cam_tracking"]
     method = mc["method"]
     log.info("--- STAGE 4 | Multi-Camera Tracking  [method: %s] ---", method)
+
+    # Run per-camera single-cam tracking first if requested
+    # (ensures all camera tracks exist before the multi-cam method runs)
+    if cfg.get("run_all_tracking", {}).get("run_before_multicam", False):
+        log.info("  -> Running per-camera tracking before multi-cam stage ...")
+        stage_run_all_tracking(cfg)
 
     # Fill in when multi-cam methods are implemented:
     METHODS = {}
@@ -284,10 +322,8 @@ def stage_multi_cam_tracking(cfg: dict):
     """
 
     if method not in METHODS:
-        raise ValueError(
-            f"Unknown multi-camera method: '{method}'. "
-            f"Choose from: {list(METHODS.keys())}"
-        )
+        log.warning("Multi-cam method '%s' not yet implemented — skipping.", method)
+        return
 
     METHODS[method](cfg)
     log.info("Multi-camera tracking complete.")
@@ -345,7 +381,7 @@ def _print_pipeline_summary(cfg: dict):
 
     print()
     print("╔" + "═" * 52 + "╗")
-    print("║    Week 4 — Multi-Camera Tracking Pipeline         ║")
+    print("║    Week 4 — Multi-Camera Tracking Pipeline     ║")
     print("╚" + "═" * 52 + "╝")
     print()
 
@@ -433,6 +469,9 @@ def run_pipeline(cfg: dict):
 
     if cfg["stages"]["single_cam_tracking"]:
         stage_single_cam_tracking(cfg, detections_path)
+
+    if cfg["stages"].get("run_all_tracking", False):
+        stage_run_all_tracking(cfg)
 
     if cfg["stages"]["multi_cam_tracking"]:
         stage_multi_cam_tracking(cfg)
