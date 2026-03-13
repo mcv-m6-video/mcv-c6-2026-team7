@@ -1,0 +1,170 @@
+# =============================================================================
+# Week 4 - Pipeline Configuration
+# Edit this file to control what runs and how.
+# All paths are relative to the project root.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# General paths
+# -----------------------------------------------------------------------------
+paths:
+  data_root:      "data/"
+  output_root:    "outputs/"
+  model_weights:  "weights/yolo_finetuned.pt"
+
+
+# -----------------------------------------------------------------------------
+# Stage toggles  — set to false to skip a stage entirely
+# -----------------------------------------------------------------------------
+stages:
+  data_processing:      true
+  finetuning:           false   # set true only when detections.mode is "yolo" and retraining is needed
+  single_cam_tracking:  true
+  multi_cam_tracking:   true
+
+
+# -----------------------------------------------------------------------------
+# Stage 1 — Data processing
+# (mirrors data_processing/data_processor.py)
+# -----------------------------------------------------------------------------
+data_processing:
+  video_path:         "../data/AICity_data/train/S03/c010/vdo.avi"
+  output_dir:         "parsed_data"
+  annotation_path:    "../data/ai_challenge_s03_c010-full_annotation.xml"
+  skip_if_exists:     true    # if true and frames already present, skip extraction entirely
+  clean_output:       false   # if true, delete existing frame_*.jpg before extracting (ignored when skip_if_exists=true)
+  image_index_base:   1       # frame filename offset used by AICityFrames
+  scale:              1.0     # resize scale for images loaded via AICityFrames
+
+
+# -----------------------------------------------------------------------------
+# Detections source — controls where tracking gets its detections from
+#
+# mode: "precomputed"  → use an existing detections file, skip YOLO entirely
+#        "yolo"        → run YOLO on the video to produce detections first
+#
+# When mode is "precomputed", the finetuning and detection stages are ignored
+# and tracking reads directly from detections_path.
+# When mode is "yolo", YOLO runs after finetuning and writes to detections_path
+# which tracking then reads.
+# -----------------------------------------------------------------------------
+detections:
+  mode:             "precomputed"   # "precomputed" | "yolo"
+  detections_path:  "Week2/detections/detections.txt"
+
+  # YOLO inference args — only used when mode is "yolo"
+  yolo_weights:     "weights/yolo_finetuned.pt"
+  yolo_video:       "data/AICity_data/train/S03/c010/vdo.avi"
+  yolo_conf:        0.25
+  yolo_imgsz:       640
+  yolo_output:      "outputs/detections.txt"
+
+
+# -----------------------------------------------------------------------------
+# Stage 2 — Fine-tuning
+# mode: "finetune"  → run convert + (optional kfold) + train
+#        "skip"     → skip entirely (use when detections.mode is "precomputed"
+#                     or you already have trained weights)
+# -----------------------------------------------------------------------------
+finetuning:
+  mode:           "skip"
+  run_kfold:      false
+
+  # convert_to_yolo.py args
+  convert:
+    video:        "../data/AICity_data/train/S03/c010/vdo.avi"
+    annotation:   "../data/ai_challenge_s03_c010-full_annotation.xml"
+    output_base:  "data/yolo_dataset"
+    folds:        4
+    seed:         42
+
+  # fine_tune.py args
+  train:
+    data:             "dataset.yaml"
+    model:            "yolov8n.pt"
+    epochs:           100
+    batch:            16
+    imgsz:            640
+    project:          "runs/train"
+    name:             "fine_tune"
+    wandb_project:    "YOLO_Project"
+    resume:           false
+    freeze:           null    # int to freeze N layers, null to disable
+    freeze_backbone:  false   # true = freeze first 10 layers
+
+
+# -----------------------------------------------------------------------------
+# Stage 3 — Single-camera tracking
+# method: "overlap" | "overlap_flow" | "kalman" | "deep_SORT" | "deep_SORT_flow"
+# (mirrors tracking/main.py)
+# -----------------------------------------------------------------------------
+single_cam_tracking:
+  method:           "kalman"
+  # detections path is taken from detections.detections_path automatically
+  video:            "data/AICity_data/train/S03/c010/vdo.avi"
+  output_dir:       "Week4/outputs/tracking"   # timestamped sub-folder created here per run
+  conf_thr_video:   0.30
+  iou_thr:          0.65
+  show_IDs_video:   true
+  show_comp_video:  true
+  memory_frames:    20
+  memory_iou_thr:   0.40
+
+
+# -----------------------------------------------------------------------------
+# Stage 3b — Evaluation  (eval_tracking.py — TrackEval HOTA + IDF1)
+# tracker_results: folder where tracking/main.py wrote tracks.txt / tracks.csv
+# -----------------------------------------------------------------------------
+evaluation:
+  tracker_name:     null           # null = derived from folder name
+  # tracker_results is set automatically at runtime from the path tracking_main() returns
+  gt_annotation:    "data/ai_challenge_s03_c010-full_annotation.xml"
+  seq_name:         "S03c010"
+  seq_length:       2141           # number of frames in AICity S03c010
+  benchmark_name:   "AICity"
+  split:            "train"
+
+
+# -----------------------------------------------------------------------------
+# Stage 3c — Summarize results  (summarize_results_tracking.py)
+# results_root: folder with one sub-dir per camera/run, each containing summary.csv
+# -----------------------------------------------------------------------------
+summarize:
+  results_root:   "outputs/"
+  output_csv:     "outputs/all_results.csv"
+  plots_dir:      "outputs/yolo_plots"
+
+
+# -----------------------------------------------------------------------------
+# Stage 4 — Multi-camera tracking  (Week 4)
+# method: "graph_matching" | "appearance_clustering" | "reid_based" | "zone_handoff"
+# All logic lives in multi_cam_tracking/ — add cameras as needed
+# -----------------------------------------------------------------------------
+multi_cam_tracking:
+  method: "graph_matching"
+  cameras:
+    - id:           "cam_01"
+      video:        "data/cam_01.mp4"
+      calibration:  null
+    - id:           "cam_02"
+      video:        "data/cam_02.mp4"
+      calibration:  null
+
+
+# -----------------------------------------------------------------------------
+# Optical flow  — standalone qualitative tool, NOT part of the main pipeline
+# Run directly:  python optical_flow/main.py --model raft_large --img1-path ...
+# Or call run_optical_flow(cfg) from a script for batch comparisons.
+# (mirrors optical_flow/main.py argparse)
+# -----------------------------------------------------------------------------
+optical_flow:
+  model:            "pyflow"    # "pyflow" | "raft_large" | "raft_small" | "flowformer_pp"
+  flowformer_ckpt:  "external/flowformerpp/checkpoints/kitti.pth"
+  img1_path:        "data/data_stereo_flow/training/image_0/000045_10.png"
+  img2_path:        "data/data_stereo_flow/training/image_0/000045_11.png"
+  gt_path:          "data/data_stereo_flow/training/flow_noc/000045_10.png"
+  plot:             ["color"]   # list of PLOT_MODES
+  plot_gt:          null        # list of PLOT_MODES or null to skip
+  plot_step:        12
+  plot_alpha:       0.5

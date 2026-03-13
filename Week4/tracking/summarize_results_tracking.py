@@ -183,17 +183,23 @@ def make_yolo_sequence_plots(df: pd.DataFrame, plots_dir: Path) -> None:
 #  Main
 # ═════════════════════════════════════════════════════════════════════════════
 
-def main() -> None:
-    ap = argparse.ArgumentParser(
-        description="Aggregate all summary.csv files into a single CSV with stats."
-    )
-    ap.add_argument("--results-root", required=True,
-                    help="Folder produced by run_all_tracking.py (contains S01_c001/, …).")
-    ap.add_argument("--output-csv", default="all_results.csv",
-                    help="Path for the aggregated output CSV (default: ./all_results.csv).")
-    ap.add_argument("--plots-dir", default="yolo_plots",
-                    help="Folder where YOLO comparison plots are saved (default: ./yolo_plots).")
-    args = ap.parse_args()
+def main(args=None) -> None:
+    """
+    Aggregate summary.csv files and produce comparison plots.
+    Called from pipeline with a SimpleNamespace, or standalone via CLI.
+    When args is None, arguments are parsed from the command line as usual.
+    """
+    if args is None:
+        ap = argparse.ArgumentParser(
+            description="Aggregate all summary.csv files into a single CSV with stats."
+        )
+        ap.add_argument("--results-root", required=True,
+                        help="Folder produced by run_all_tracking.py (contains S01_c001/, …).")
+        ap.add_argument("--output-csv", default="all_results.csv",
+                        help="Path for the aggregated output CSV (default: ./all_results.csv).")
+        ap.add_argument("--plots-dir", default="yolo_plots",
+                        help="Folder where YOLO comparison plots are saved (default: ./yolo_plots).")
+        args = ap.parse_args()
 
     results_root = Path(args.results_root).resolve()
     output_csv   = Path(args.output_csv).resolve()

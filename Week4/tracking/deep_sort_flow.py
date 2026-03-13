@@ -33,7 +33,7 @@ import sys
 from typing import Optional
 
 # Deep SORT internals  (same imports as execute_deep_SORT)
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../external/deep_sort"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../external/deep_sort"))
 
 from deep_sort import nn_matching
 from deep_sort.tracker import Tracker
@@ -41,7 +41,7 @@ from deep_sort.detection import Detection
 from application_util import preprocessing
 
 # Reuse flow utilities already present in your codebase
-from overlap import (
+from tracking.overlap import (
     np_to_torch_img,
     compute_optical_flow,
     flow_shift_box,

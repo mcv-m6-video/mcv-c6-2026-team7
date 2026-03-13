@@ -6,6 +6,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../external/deep_sort"))
 
+
 from deep_sort import tracker
 from deep_sort import nn_matching
 from deep_sort.detection import Detection

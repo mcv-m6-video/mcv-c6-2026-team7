@@ -6,7 +6,7 @@ import os
 
 from metrics import compute_iou
 from tqdm import tqdm
-from optical_flow import compute_optical_flow
+from tracking.optical_flow import compute_optical_flow
 import torch
 
 # Convert because metrics/compute_iou() expects (x,y,w,h)

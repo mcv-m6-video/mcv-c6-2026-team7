@@ -24,7 +24,7 @@ if TRACKEVAL_PATH not in sys.path:
     sys.path.insert(0, TRACKEVAL_PATH)
 
 import trackeval
-from prepare_gt_for_trackeval import MOTChallengeConverter
+from tracking.prepare_gt_for_trackeval import MOTChallengeConverter
 
 
 def prepare_tracker_file(tracker_csv: Path, output_file: Path):
@@ -261,49 +261,55 @@ def plot_hota_idf1(detailed_csv: Path, tracker_name: str, output_dir: Path) -> N
     print(f"\nPlot saved at {out_path}")
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Evaluate tracking results with TrackEval (HOTA, IDF1)"
-    )
-    parser.add_argument(
+def main(args=None):
+    """
+    Evaluate tracking results with TrackEval (HOTA + IDF1).
+    Called from pipeline with a SimpleNamespace, or standalone via CLI.
+    When args is None, arguments are parsed from the command line as usual.
+    """
+    if args is None:
+      parser = argparse.ArgumentParser(
+          description="Evaluate tracking results with TrackEval (HOTA, IDF1)"
+      )
+      parser.add_argument(
         "--tracker-results",
         required=True,
         help="Path to tracker output directory (containing tracks.csv or tracks.txt)"
     )
-    parser.add_argument(
+      parser.add_argument(
         "--tracker-name",
         default=None,
         help="Name for this tracker (default: derived from folder name)"
     )
-    parser.add_argument(
+      parser.add_argument(
         "--gt-annotation",
         default="data/ai_challenge_s03_c010-full_annotation.xml",
         help="Path to ground truth XML annotation"
     )
-    parser.add_argument(
+      parser.add_argument(
         "--seq-name",
         default="S03c010",
         help="Sequence name"
     )
-    parser.add_argument(
+      parser.add_argument(
         "--seq-length",
         type=int,
         default=2141,
         help="Number of frames in the sequence (default: 2141 for AICity S03c010)"
     )
-    parser.add_argument(
+      parser.add_argument(
         "--benchmark-name",
         default="AICity",
         help="Benchmark name for folder structure"
     )
-    parser.add_argument(
+      parser.add_argument(
         "--split",
         default="train",
         help="Split name (train/test)"
     )
     
-    args = parser.parse_args()
-    
+      args = parser.parse_args()
+
     # Resolve paths
     tracker_results_dir = Path(args.tracker_results)
     if not tracker_results_dir.is_absolute():

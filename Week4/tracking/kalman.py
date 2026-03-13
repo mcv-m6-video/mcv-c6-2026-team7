@@ -1,4 +1,4 @@
-from SORT.sort import *
+from tracking.SORT.sort import *
 import tqdm as tqdm
 import numpy as np
 import pandas as pd
