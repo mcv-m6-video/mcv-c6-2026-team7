@@ -450,7 +450,7 @@ def main() -> None:
     ap.add_argument("--data-root", required=True,
                     help="Root folder containing the sequences (S01, S03, S04 …).")
     ap.add_argument("--repo-root", required=True,
-                    help="Root of the tracking repository (contains tracking/).")
+                    help="Root of the tracking repository (contains Week3/tracking/).")
     ap.add_argument("--detections-subpath", default="det",
                     help="Sub-folder inside a camera folder containing det_<model>.txt files "
                          "(default: det).")
