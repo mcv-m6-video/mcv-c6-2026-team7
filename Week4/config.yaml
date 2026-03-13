@@ -3,8 +3,8 @@
 # Edit this file to control what runs and how.
 # All paths are relative to the project root.
 # =============================================================================
- 
- 
+
+
 # -----------------------------------------------------------------------------
 # General paths
 # -----------------------------------------------------------------------------
@@ -12,35 +12,25 @@ paths:
   data_root:      "data/"
   output_root:    "outputs/"
   model_weights:  "weights/yolo_finetuned.pt"
- 
- 
+
+
 # -----------------------------------------------------------------------------
 # Stage toggles  — set to false to skip a stage entirely
 # -----------------------------------------------------------------------------
+# ── Stage toggles ────────────────────────────────────────────────────────────
+# Stage 4 (run_all_tracking) is the main production flow: it discovers all
+# cameras automatically, runs tracking + evaluation on each, and feeds Stage 4
+# multi-cam methods. Stages 1-3 are debug/single-camera utilities.
 stages:
-  data_processing:      true
-  finetuning:           false   # set true only when detections.mode is "yolo" and retraining is needed
-  single_cam_tracking:  true
-  # ---------------------------------------------------------------------------
-# Stage 3b — Run-All Single-Camera Tracking
-# Iterates every camera under data_root, runs each method × detection source,
-# evaluates with TrackEval and saves summary CSVs + comparison plots.
-# Also runs automatically as a pre-step in Stage 4 when run_before_multicam=true.
-# ---------------------------------------------------------------------------
-run_all_tracking:
-  data_root:           "data/AICity_data/train"   # root with S01/, S03/, S04/ …
-  repo_root:           "Week4"                    # folder containing tracking/
-  output_dir:          "outputs/run_all_tracking"
-  detections_subpath:  "det"                      # subfolder inside cam dir with det_<model>.txt
-  gt_subpath:          "gt/gt.txt"                # GT path relative to cam dir
-  benchmark_name:      "AICity"
-  split:               "train"
-  methods:             ["kalman"]                 # methods to run on every camera
-  run_before_multicam: false                      # if true, auto-runs before Stage 4
- 
-multi_cam_tracking:   true
- 
- 
+  # --- Debug / single-camera tools (off by default) ------------------------
+  data_processing:      false  # extract & index frames for a single video
+  finetuning:           false  # fine-tune YOLO on a single sequence
+  single_cam_tracking:  false  # run + evaluate one method on one camera
+  # --- Production flow (on by default) -------------------------------------
+  run_all_tracking:     true   # Stage 4a: run all single-cam trackings across every camera
+  multi_cam_tracking:   false  # Stage 4b: run multi-cam association (enable when implemented)
+
+
 # -----------------------------------------------------------------------------
 # Stage 1 — Data processing
 # (mirrors data_processing/data_processor.py)
@@ -53,8 +43,8 @@ data_processing:
   clean_output:       false   # if true, delete existing frame_*.jpg before extracting (ignored when skip_if_exists=true)
   image_index_base:   1       # frame filename offset used by AICityFrames
   scale:              1.0     # resize scale for images loaded via AICityFrames
- 
- 
+
+
 # -----------------------------------------------------------------------------
 # Detections source — controls where tracking gets its detections from
 #
@@ -69,15 +59,15 @@ data_processing:
 detections:
   mode:             "precomputed"   # "precomputed" | "yolo"
   detections_path:  "Week2/detections/detections.txt"
- 
+
   # YOLO inference args — only used when mode is "yolo"
   yolo_weights:     "weights/yolo_finetuned.pt"
   yolo_video:       "data/AICity_data/train/S03/c010/vdo.avi"
   yolo_conf:        0.25
   yolo_imgsz:       640
   yolo_output:      "outputs/detections.txt"
- 
- 
+
+
 # -----------------------------------------------------------------------------
 # Stage 2 — Fine-tuning
 # mode: "finetune"  → run convert + (optional kfold) + train
@@ -87,7 +77,7 @@ detections:
 finetuning:
   mode:           "skip"
   run_kfold:      false
- 
+
   # convert_to_yolo.py args
   convert:
     video:        "data/AICity_data/train/S03/c010/vdo.avi"
@@ -95,7 +85,7 @@ finetuning:
     output_base:  "data/yolo_dataset"
     folds:        4
     seed:         42
- 
+
   # fine_tune.py args
   train:
     data:             "dataset.yaml"
@@ -109,8 +99,8 @@ finetuning:
     resume:           false
     freeze:           null    # int to freeze N layers, null to disable
     freeze_backbone:  false   # true = freeze first 10 layers
- 
- 
+
+
 # -----------------------------------------------------------------------------
 # Stage 3 — Single-camera tracking
 # method: "overlap" | "overlap_flow" | "kalman" | "deep_SORT" | "deep_SORT_flow"
@@ -127,8 +117,8 @@ single_cam_tracking:
   show_comp_video:  true
   memory_frames:    20
   memory_iou_thr:   0.40
- 
- 
+
+
 # -----------------------------------------------------------------------------
 # Stage 3b — Evaluation  (eval_tracking.py — TrackEval HOTA + IDF1)
 # tracker_results: folder where tracking/main.py wrote tracks.txt / tracks.csv
@@ -141,8 +131,8 @@ evaluation:
   seq_length:       2141           # number of frames in AICity S03c010
   benchmark_name:   "AICity"
   split:            "train"
- 
- 
+
+
 # -----------------------------------------------------------------------------
 # Stage 3c — Summarize results  (summarize_results_tracking.py)
 # results_root: folder with one sub-dir per camera/run, each containing summary.csv
@@ -151,8 +141,8 @@ summarize:
   results_root:   "outputs/tracking"   # folder where timestamped run dirs land (kalman_..., deep_SORT_...)
   output_csv:     "outputs/all_results.csv"
   plots_dir:      "outputs/yolo_plots"
- 
- 
+
+
 # -----------------------------------------------------------------------------
 # Stage 4 — Multi-camera tracking  (Week 4)
 # method: "graph_matching" | "appearance_clustering" | "reid_based" | "zone_handoff"
@@ -165,7 +155,7 @@ summarize:
 # Also runs automatically as a pre-step in Stage 4 when run_before_multicam=true.
 # ---------------------------------------------------------------------------
 run_all_tracking:
-  data_root:           "data/AICity_data/train"   # root with S01/, S03/, S04/ …
+  data_root:           "../data/AICity_data/train"   # root with S01/, S03/, S04/ …
   repo_root:           "Week4"                    # folder containing tracking/
   output_dir:          "outputs/run_all_tracking"
   detections_subpath:  "det"                      # subfolder inside cam dir with det_<model>.txt
@@ -174,7 +164,7 @@ run_all_tracking:
   split:               "train"
   methods:             ["kalman"]                 # methods to run on every camera
   run_before_multicam: false                      # if true, auto-runs before Stage 4
- 
+
 multi_cam_tracking:
   method: "graph_matching"
   cameras:
@@ -184,8 +174,8 @@ multi_cam_tracking:
     - id:           "cam_02"
       video:        "data/cam_02.mp4"
       calibration:  null
- 
- 
+
+
 # -----------------------------------------------------------------------------
 # Optical flow  — standalone qualitative tool, NOT part of the main pipeline
 # Run directly:  python optical_flow/main.py --model raft_large --img1-path ...

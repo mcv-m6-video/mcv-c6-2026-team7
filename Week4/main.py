@@ -373,6 +373,7 @@ def _print_pipeline_summary(cfg: dict):
     ev  = cfg["evaluation"]
     sm  = cfg["summarize"]
     mc  = cfg["multi_cam_tracking"]
+    ra  = cfg["run_all_tracking"]
     of  = cfg["optical_flow"]
 
     ON  = "\033[92m✔\033[0m"   # green tick
@@ -381,12 +382,32 @@ def _print_pipeline_summary(cfg: dict):
 
     print()
     print("╔" + "═" * 52 + "╗")
-    print("║    Week 4 — Multi-Camera Tracking Pipeline     ║")
+    print("║    Week 4 — Multi-Camera Tracking Pipeline         ║")
     print("╚" + "═" * 52 + "╝")
     print()
 
-    # ── Stages ──────────────────────────────────────────
-    print("  STAGES")
+    # ── Production stages ────────────────────────────────
+    print("  PRODUCTION STAGES")
+    print(f"  {SEP}")
+
+    print(f"  {ON if st.get('run_all_tracking') else OFF}  Stage 4a · Run-All Single-Camera Tracking")
+    if st.get("run_all_tracking"):
+        print(f"        Data root          : {ra['data_root']}")
+        print(f"        Methods            : {ra['methods']}")
+        print(f"        Output             : {ra['output_dir']}")
+        print(f"        Run before multi-cam : {ra.get('run_before_multicam', False)}")
+
+    print(f"  {ON if st['multi_cam_tracking'] else OFF}  Stage 4b · Multi-Camera Tracking")
+    if st["multi_cam_tracking"]:
+        print(f"        Method             : {mc['method']}")
+        cams = mc.get("cameras", [])
+        print(f"        Cameras            : {len(cams)}  ({', '.join(c['id'] for c in cams)})")
+
+    print(f"  {SEP}")
+
+    # ── Debug / single-camera stages ────────────────────
+    print()
+    print("  DEBUG / SINGLE-CAMERA STAGES")
     print(f"  {SEP}")
 
     print(f"  {ON if st['data_processing'] else OFF}  Stage 1 · Data Processing")
@@ -402,13 +423,13 @@ def _print_pipeline_summary(cfg: dict):
             print(f"        Clean output       : {dp['clean_output']}")
 
     print(f"  {ON if st['finetuning'] else OFF}  Stage 2 · Fine-Tuning")
-    print(f"        Detection source   : {det['mode'].upper()}")
-    if det["mode"] == "precomputed":
-        print(f"        Detections file    : {det['detections_path']}")
-    else:
-        print(f"        YOLO weights       : {det['yolo_weights']}")
-        print(f"        YOLO video         : {det['yolo_video']}")
     if st["finetuning"]:
+        print(f"        Detection source   : {det['mode'].upper()}")
+        if det["mode"] == "precomputed":
+            print(f"        Detections file    : {det['detections_path']}")
+        else:
+            print(f"        YOLO weights       : {det['yolo_weights']}")
+            print(f"        YOLO video         : {det['yolo_video']}")
         print(f"        Finetune mode      : {ft['mode'].upper()}")
         if ft["mode"] == "finetune":
             t = ft["train"]
@@ -416,20 +437,13 @@ def _print_pipeline_summary(cfg: dict):
             print(f"        Epochs             : {t['epochs']}  |  Batch: {t['batch']}  |  ImgSz: {t['imgsz']}")
             print(f"        K-Fold eval        : {'yes' if ft['run_kfold'] else 'no'}")
 
-    print(f"  {ON if st['single_cam_tracking'] else OFF}  Stage 3 · Single-Camera Tracking")
+    print(f"  {ON if st['single_cam_tracking'] else OFF}  Stage 3 · Single-Camera Tracking (debug)")
     if st["single_cam_tracking"]:
         print(f"        Method             : {sc['method']}")
         print(f"        Video              : {sc['video']}")
         print(f"        IoU threshold      : {sc['iou_thr']}  |  Memory frames: {sc['memory_frames']}")
         print(f"        Evaluation         : seq={ev['seq_name']}  benchmark={ev['benchmark_name']}/{ev['split']}")
-        print(f"        Tracker results    : set at runtime from tracking output")
         print(f"        Summary output     : {sm['output_csv']}  |  plots → {sm['plots_dir']}")
-
-    print(f"  {ON if st['multi_cam_tracking'] else OFF}  Stage 4 · Multi-Camera Tracking")
-    if st["multi_cam_tracking"]:
-        print(f"        Method             : {mc['method']}")
-        cams = mc.get("cameras", [])
-        print(f"        Cameras            : {len(cams)}  ({', '.join(c['id'] for c in cams)})")
 
     print(f"  {SEP}")
 
@@ -458,18 +472,19 @@ def run_pipeline(cfg: dict):
 
     Path(cfg["paths"]["output_root"]).mkdir(parents=True, exist_ok=True)
 
+    # ── Debug / single-camera stages (off by default) ─────────────────────
     if cfg["stages"]["data_processing"]:
         stage_data_processing(cfg)
 
     if cfg["stages"]["finetuning"]:
         stage_finetuning(cfg)
 
-    # Detections are always resolved before tracking — either from file or YOLO
-    detections_path = stage_detections(cfg)
-
     if cfg["stages"]["single_cam_tracking"]:
+        # Detections only resolved when single-cam tracking is active
+        detections_path = stage_detections(cfg)
         stage_single_cam_tracking(cfg, detections_path)
 
+    # ── Production stages (on by default) ─────────────────────────────────
     if cfg["stages"].get("run_all_tracking", False):
         stage_run_all_tracking(cfg)
 
