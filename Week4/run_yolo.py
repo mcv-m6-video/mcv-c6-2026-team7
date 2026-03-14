@@ -16,6 +16,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--source", default="../data/AICity_data/train", help="Path to source folder")
 parser.add_argument("--output", default="output_detections_test", help="Base output directory")
 parser.add_argument("--timestamp_dir", default="../data/AICity_data/cam_timestamp", help="Path to timestamp folder")
+parser.add_argument("--model", default="yolov3.pt", help="YOLO model to use (e.g., yolov3.pt, yolov26m.pt)")
 args = parser.parse_args()
 
 SOURCE_DIR = args.source
@@ -25,7 +26,8 @@ TARGET_CLASSES = [2, 5, 7]
 
 os.makedirs(BASE_OUTPUT, exist_ok=True)
 
-model = YOLO("yolov3.pt")
+print(f"Loading YOLO model: {args.model}")
+model = YOLO(args.model)
 
 def load_timestamps(timestamp_dir, scene):
     timestamp_file = os.path.join(timestamp_dir, f"{scene}.txt")
