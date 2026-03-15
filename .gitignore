@@ -8,11 +8,15 @@ parsed_data
 *.png
 *.jpeg
 *.jpg
+*.log
+*.pt
 results
 outputs
 detections
 external/flowformerpp/checkpoints/
 flow_cache/
 wandb/
+runs/
+output_detections_test/
 
 .DS_Store
