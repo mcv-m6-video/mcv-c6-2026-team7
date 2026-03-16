@@ -142,12 +142,21 @@ def main(args=None):
     print(f"  -> Tracks saved to: {out_txt}")
  
     # Render video with IDs
-    if args.show_IDs_video:
+    # Coerce to bool — argparse may deliver 'False' as a string when called
+    # from a pipeline via SimpleNamespace, which is truthy as a string.
+    show_ids = args.show_IDs_video
+    if isinstance(show_ids, str):
+        show_ids = show_ids.strip().lower() not in ('false', '0', 'no', '')
+    show_cmp = args.show_comp_video
+    if isinstance(show_cmp, str):
+        show_cmp = show_cmp.strip().lower() not in ('false', '0', 'no', '')
+
+    if show_ids:
         render_tracked_video(vid_path, tracked, out_vid, conf_thr=args.conf_thr_video, show_conf=True)
         print(f"  -> Tracked video saved to: {out_vid}")
- 
+
     # Render comparison video (detections vs tracks)
-    if args.show_comp_video:
+    if show_cmp:
         render_comparison_video(vid_path, detections, tracked, out_cmp, conf_thr=args.conf_thr_video, show_conf=False)
         print(f"  -> Comparison video saved to: {out_cmp}")
  
