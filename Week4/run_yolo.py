@@ -31,6 +31,9 @@ model = YOLO(args.model)
 
 def load_timestamps(timestamp_dir, scene):
     timestamp_file = os.path.join(timestamp_dir, f"{scene}.txt")
+    if not os.path.exists(timestamp_file):
+        raise FileNotFoundError(f"Timestamp file not found for scene '{scene}': {timestamp_file}")
+    
     timestamps = {}
     if os.path.exists(timestamp_file):
         with open(timestamp_file, 'r') as f:
