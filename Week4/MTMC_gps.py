@@ -10,13 +10,10 @@ from tqdm import tqdm
 from collections import defaultdict
 from scipy.spatial.distance import cdist
 from scipy.cluster.hierarchy import linkage, fcluster
-
 from gps_utils import (
     load_homographies,
     tracklet_first_world_pos,
     tracklet_last_world_pos,
-    build_spatiotemporal_gate,
-    row_to_world,
 )
 
 # ─────────────────────────────────────────────
@@ -31,32 +28,23 @@ def parse_args():
     p.add_argument("sequence", type=str,
                    help="Sequence name, e.g. S01")
     p.add_argument("--root", type=str,
-                   default="Week4/tracking_overlap_yolov3u_base/output_detections",
+                   default="Week4/tracking_overlap_yolov26x_base/output_detections",
                    help="Root folder that contains S01/, S03/, …")
-    p.add_argument("--output", type=str, default="results",
+    p.add_argument("--output", type=str, default="Week4/results",
                    help="Directory where the output .txt will be written")
 
-    p.add_argument("--dist-threshold", type=float, default=0.10,
+    p.add_argument("--dist-threshold", type=float, default=0.45,
                    help="Cosine distance threshold for merging tracklets into the same "
                         "global identity. Lower → fewer merges (more IDs), "
                         "higher → more aggressive merging.")
+    p.add_argument("--geo-threshold", type=float, default=2000)
+    p.add_argument("--calib-root", type=str, default="Week4/AI_CITY_CHALLENGE_2022_TRAIN/train",
+                   help="Root folder with calibration.txt files (same layout as --root). "
+                        "Defaults to --root if not provided.")
     p.add_argument("--n-hist-bins", type=int, default=8,
                    help="Number of bins per HSV channel for colour histograms.")
     p.add_argument("--max-frames-sample", type=int, default=4,
                    help="Max frames to sample per tracklet when extracting colour features.")
-
-    # GPS arguments
-    p.add_argument("--max-speed-mps", type=float, default=2.0,
-                   help="Maximum physically plausible speed (in homography units/second) "
-                        "between the end of one tracklet and the start of another. "
-                        "Pairs implying a higher speed are hard-blocked before clustering. "
-                        "Typical values: ~2.0 for pedestrians (metres/s), "
-                        "~15.0 for vehicles (metres/s). Scale to your homography units.")
-    p.add_argument("--min-dt-s", type=float, default=0.5,
-                   help="Minimum time gap (seconds) required between two tracklets before "
-                        "the speed gate is applied. Overlapping or near-simultaneous "
-                        "tracklets are left unrestricted.")
-
     p.add_argument("--gt", type=str,
                    default="./AI_CITY_CHALLENGE_2022_TRAIN/eval/ground_truth_train.txt",
                    help="Path to ground-truth .txt file. If given, eval.py is run.")
@@ -80,6 +68,7 @@ def load_mtsc(txt_path: str, cam_id: int) -> pd.DataFrame:
     """Load a single tracking_overlap.txt and add camera id."""
     df = pd.read_csv(txt_path, header=0, names=MTSC_COLS)
     df["cam_id"] = cam_id
+    # Derive bbox in (x, y, w, h) format expected by the eval script
     df["width"]  = df["x2"] - df["x1"]
     df["height"] = df["y2"] - df["y1"]
     return df
@@ -96,8 +85,8 @@ def load_sequence(root: str, sequence: str):
 
     cameras = []
     for cam_dir in cam_dirs:
-        cam_name = os.path.basename(cam_dir)
-        cam_id   = int(cam_name[1:])
+        cam_name = os.path.basename(cam_dir)               # e.g. "c001"
+        cam_id   = int(cam_name[1:])                       # → 1
         txt_file = os.path.join(cam_dir, "tracking_overlap.txt")
         if not os.path.isfile(txt_file):
             print(f"[WARN] Missing {txt_file}, skipping.")
@@ -130,6 +119,7 @@ def color_histogram_feature(tracklet_df: pd.DataFrame,
     if not os.path.isdir(img_dir):
         raise FileNotFoundError(f"[ERROR] Frames directory not found: {img_dir}")
 
+    # Sample uniformly across the tracklet
     rows = tracklet_df.sample(min(max_samples, len(tracklet_df)),
                               random_state=0).sort_values("frame_id")
 
@@ -137,7 +127,8 @@ def color_histogram_feature(tracklet_df: pd.DataFrame,
     n_valid  = 0
 
     for _, row in rows.iterrows():
-        fid      = int(row["frame_id"])
+        # Try common zero-padded filename conventions
+        fid  = int(row["frame_id"])
         img_path = os.path.join(img_dir, f"{fid:06d}.jpg")
         if not os.path.isfile(img_path):
             continue
@@ -175,45 +166,40 @@ def color_histogram_feature(tracklet_df: pd.DataFrame,
         print(f"  [DEBUG] First candidate path: {sample_path!r}, exists={os.path.isfile(sample_path)}")
         raise ValueError("[ERROR] No valid frames found for tracklet; cannot extract HSV features.")
 
+    # L2-normalise
     hist_avg = hist_sum / n_valid
     norm = np.linalg.norm(hist_avg)
     if norm > 0:
         hist_avg /= norm
     return hist_avg
 
-
 def build_tracklet_features(cameras, sequence, n_bins, max_samples,
-                             homographies=None):
+                             homographies: dict = None):
     """
-    Construye la lista de tracklets con:
-      - feature   : histograma HSV L2-normalizado (apariencia pura, sin GPS)
-      - world_first : ((wx, wy), t_start)  — primer punto GPS del tracklet
-      - world_last  : ((wx, wy), t_end)    — último punto GPS del tracklet
-      - cam_id, track_id, cam_name, df
-
-    El GPS NO se fusiona en el vector de apariencia. Se almacena por separado
-    para el gate espacio-temporal en build_distance_matrix.
+    Returns:
+      tracklets : list of dicts with keys
+                  cam_id, track_id, cam_name, feature, df,
+                  world_first, world_last   ← GPS positions (or None)
+      cam_track_to_idx : dict (cam_id, track_id) → index in tracklets
     """
     tracklets = []
     cam_track_to_idx = {}
 
     for cam_id, df in tqdm(cameras, desc="Building tracklet features", unit="camera"):
         cam_name = f"c{cam_id:03d}"
-        H = (homographies[cam_id][0]
-             if (homographies and homographies[cam_id][0] is not None)
-             else None)
+
+        # Homography for this camera (None if unavailable)
+        H = None
+        if homographies and cam_id in homographies:
+            H, _ = homographies[cam_id]
 
         for tid, tdf in df.groupby("track_id"):
             feat = color_histogram_feature(
                 tdf, sequence, cam_name, n_bins, max_samples)
 
-            # Calcular posiciones GPS de inicio y fin del tracklet
-            if H is not None:
-                world_first = tracklet_first_world_pos(tdf, H)
-                world_last  = tracklet_last_world_pos(tdf, H)
-            else:
-                world_first = ((None, None), None)
-                world_last  = ((None, None), None)
+            # GPS world positions of the first and last detection
+            world_first = tracklet_first_world_pos(tdf, H) if H is not None else None
+            world_last  = tracklet_last_world_pos(tdf, H)  if H is not None else None
 
             idx = len(tracklets)
             tracklets.append({
@@ -221,35 +207,42 @@ def build_tracklet_features(cameras, sequence, n_bins, max_samples,
                 "track_id":    tid,
                 "cam_name":    cam_name,
                 "feature":     feat,
-                "world_first": world_first,   # ((wx, wy), t_start)
-                "world_last":  world_last,    # ((wx, wy), t_end)
                 "df":          tdf,
+                "world_first": world_first,   # ((wx, wy), timestamp) | None
+                "world_last":  world_last,    # ((wx, wy), timestamp) | None
             })
             cam_track_to_idx[(cam_id, tid)] = idx
 
     print(f"\n  Total tracklets across all cameras: {len(tracklets)}")
+    n_with_gps = sum(1 for t in tracklets if t["world_first"] is not None)
+    print(f"  Tracklets with GPS world positions: {n_with_gps}/{len(tracklets)}")
     return tracklets, cam_track_to_idx
 
 # ─────────────────────────────────────────────
 # Cross-camera matching
 # ─────────────────────────────────────────────
 
-def build_distance_matrix(tracklets,
-                           max_speed_mps: float = 2.0,
-                           min_dt_s: float = 0.5):
+def build_distance_matrix(tracklets, geo_threshold=None):
     """
-    Compute pairwise cosine distance between all tracklets (apariencia HSV pura).
+    Compute pairwise cosine distance between all tracklets.
 
-    Blocking rules (distance forced to maximum):
-      1. Same-camera pairs → 1.0  (soft block, never merged)
-      2. GPS spatio-temporal gate → 2.0  (hard block, physically impossible)
+    Gate logic (AND):
+      - Same-camera pairs are always blocked (distance = 1.0).
+      - Cross-camera pairs where BOTH tracklets have GPS data AND their
+        exit→entry world distance exceeds geo_threshold are also blocked
+        (distance = 1.0).  This is a hard gate: if either tracklet lacks
+        GPS data the pair is decided by colour alone.
+      - All remaining pairs use cosine distance of HSV histograms.
 
-    El GPS actúa como filtro binario DESPUÉS de calcular la distancia de
-    apariencia, no como componente del vector de features. Esto separa
-    correctamente las dos señales:
-        - Apariencia: ¿se parecen estos dos tracklets?
-        - GPS: ¿es físicamente posible que sean la misma persona?
+    A merge (collision) happens when:
+        d_color < dist_threshold  AND  d_geo < geo_threshold   (if GPS available)
+        d_color < dist_threshold                                (if GPS unavailable)
+
+    Setting geo_threshold=None disables the GPS gate entirely and reproduces
+    the original colour-only behaviour exactly.
     """
+    import math
+
     n = len(tracklets)
     feats = np.vstack([t["feature"] for t in tracklets])
 
@@ -260,39 +253,73 @@ def build_distance_matrix(tracklets,
     cos_dist = cdist(feats_normed, feats_normed, metric="cosine")
     cos_dist = np.clip(cos_dist, 0.0, 2.0)
 
-    # Block 1: same-camera pairs (nunca se deben mergear en MTMC)
+    # ── Same-camera: always blocked ──────────────────────────────────────
     for i, ti in enumerate(tracklets):
         for j, tj in enumerate(tracklets):
             if ti["cam_id"] == tj["cam_id"]:
                 cos_dist[i, j] = 1.0
-
-    # Block 2: GPS spatio-temporal gate — bloquea movimientos físicamente imposibles
-    allowed = build_spatiotemporal_gate(
-        tracklets,
-        max_speed_mps=max_speed_mps,
-        min_dt_s=min_dt_s,
-    )
-    cos_dist[~allowed] = 2.0
-
     np.fill_diagonal(cos_dist, 0.0)
+
+    # ── GPS hard gate (AND condition) ────────────────────────────────────
+    n_blocked_geo = 0
+    if geo_threshold is not None:
+        for i in range(n):
+            ti = tracklets[i]
+            if ti["cam_id"] is None:
+                continue
+            if ti["world_first"] is None or ti["world_last"] is None:
+                continue
+            (wx_last_i, wy_last_i), t_end_i   = ti["world_last"]
+            (wx_first_i, wy_first_i), _        = ti["world_first"]
+
+            for j in range(i + 1, n):
+                tj = tracklets[j]
+                if ti["cam_id"] == tj["cam_id"]:
+                    continue   # already blocked above
+                if tj["world_first"] is None or tj["world_last"] is None:
+                    continue   # no GPS for j → colour only, no gate
+
+                (wx_last_j, wy_last_j), t_end_j   = tj["world_last"]
+                (wx_first_j, wy_first_j), _        = tj["world_first"]
+
+                # Compare exit point of the earlier tracklet to
+                # entry point of the later one
+                if t_end_i <= t_end_j:
+                    wx_a, wy_a = wx_last_i,  wy_last_i
+                    wx_b, wy_b = wx_first_j, wy_first_j
+                else:
+                    wx_a, wy_a = wx_last_j,  wy_last_j
+                    wx_b, wy_b = wx_first_i, wy_first_i
+
+                world_dist = math.hypot(wx_a - wx_b, wy_a - wy_b)
+
+                if world_dist > geo_threshold:
+                    cos_dist[i, j] = 1.0
+                    cos_dist[j, i] = 1.0
+                    n_blocked_geo += 1
+
+        print(f"  [GPS] AND-gate blocked {n_blocked_geo} cross-cam pairs "
+              f"(world_dist > {geo_threshold:.0f})")
+    else:
+        print(f"  [GPS] Gate disabled — colour-only mode")
+
     return cos_dist.astype(np.float32)
 
 
-def cluster_tracklets(tracklets, dist_threshold,
-                      max_speed_mps: float = 2.0,
-                      min_dt_s: float = 0.5):
+def cluster_tracklets(tracklets, dist_threshold, geo_threshold=None):
     """
     Agglomerative clustering (average linkage) on the distance matrix.
-    Returns an array of global IDs, one per tracklet.
+    Returns an array of global IDs (1-based), one per tracklet.
+
+    A pair is a collision (same vehicle) when:
+        d_color < dist_threshold  AND  world_dist < geo_threshold
+
+    If geo_threshold is None, only colour is used (original behaviour).
     """
     if len(tracklets) == 1:
         return np.array([1])
 
-    dist_matrix = build_distance_matrix(
-        tracklets,
-        max_speed_mps=max_speed_mps,
-        min_dt_s=min_dt_s,
-    )
+    dist_matrix = build_distance_matrix(tracklets, geo_threshold=geo_threshold)
 
     n = len(tracklets)
     condensed = []
@@ -301,23 +328,26 @@ def cluster_tracklets(tracklets, dist_threshold,
             condensed.append(dist_matrix[i, j])
     condensed = np.array(condensed, dtype=np.float64)
 
-    Z = linkage(condensed, method="average")
+    Z      = linkage(condensed, method="average")
     labels = fcluster(Z, t=dist_threshold, criterion="distance")
-    return labels   # 1-based cluster IDs
+    return labels
 
 # ─────────────────────────────────────────────
 # Build output DataFrame
 # ─────────────────────────────────────────────
 
-def build_output(tracklets, global_ids, homographies=None, min_cams=2):
+def build_output(tracklets, global_ids, homographies: dict = None, min_cams=2):
     """
     Assemble the final DataFrame in AI City eval format:
       CameraId, Id, FrameId, X, Y, Width, Height, Xworld, Yworld
 
-    Xworld/Yworld are filled with real world-plane coordinates when a
-    homography is available for the camera, otherwise -1.
-
     Only global IDs spanning >= min_cams cameras are included.
+
+    NOTE: Xworld/Yworld are intentionally written as -1.
+    The AI City eval script switches to a different (world-coordinate) scoring
+    mode when these fields are non-(-1), which is not comparable to the
+    baseline. World coordinates are used internally for the GPS gate but
+    must not appear in the output file.
     """
     gid_to_cams = defaultdict(set)
     for t, gid in zip(tracklets, global_ids):
@@ -331,11 +361,8 @@ def build_output(tracklets, global_ids, homographies=None, min_cams=2):
             continue
         df  = t["df"]
         cam = t["cam_id"]
-        H   = (homographies[cam][0]
-               if (homographies and homographies[cam][0] is not None) else None)
 
         for _, row in df.iterrows():
-            xw, yw = row_to_world(row, H)
             records.append({
                 "CameraId": cam,
                 "Id":       int(gid),
@@ -344,8 +371,8 @@ def build_output(tracklets, global_ids, homographies=None, min_cams=2):
                 "Y":        int(row["y1"]),
                 "Width":    int(row["width"]),
                 "Height":   int(row["height"]),
-                "Xworld":   xw,
-                "Yworld":   yw,
+                "Xworld":   -1,
+                "Yworld":   -1,
             })
 
     out_df = pd.DataFrame(records, columns=[
@@ -357,7 +384,6 @@ def build_output(tracklets, global_ids, homographies=None, min_cams=2):
     print(f"  Kept {len(valid_gids)} global IDs spanning >={min_cams} cameras "
           f"({n_filtered} single-camera IDs discarded)")
     return out_df
-
 
 def save_output(df: pd.DataFrame, out_path: str):
     df.to_csv(out_path, sep=" ", header=False, index=False)
@@ -399,10 +425,9 @@ def main():
     print("\n" + "═" * 60)
     print(f"  Sequence      : {args.sequence}")
     print(f"  Root dir      : {args.root}")
-    print(f"  Feature mode  : HSV colour histograms (apariencia pura)")
-    print(f"  GPS gate      : spatio-temporal (max_speed={args.max_speed_mps} u/s, "
-          f"min_dt={args.min_dt_s} s)")
+    print(f"  Feature mode  : HSV colour histograms + GPS AND-gate")
     print(f"  Dist threshold: {args.dist_threshold}")
+    print(f"  Geo threshold : {args.geo_threshold}  (None = colour-only)")
     print("═" * 60 + "\n")
 
     # ── Load MTSC data ───────────────────────
@@ -412,13 +437,14 @@ def main():
         sys.exit("[ERROR] No cameras loaded. Aborting.")
 
     # ── Load homographies ────────────────────
-    print(f"\n[2/5] Loading GPS homographies…")
-    seq_dir  = os.path.join("./AI_CITY_CHALLENGE_2022_TRAIN/train", args.sequence)
-    cam_ids  = [cam_id for cam_id, _ in cameras]
+    print(f"\n[2/5] Loading camera homographies…")
+    calib_root = args.calib_root if args.calib_root else args.root
+    seq_dir    = os.path.join(calib_root, args.sequence)
+    cam_ids    = [cam_id for cam_id, _ in cameras]
     homographies = load_homographies(seq_dir, cam_ids)
 
     # ── Extract features ─────────────────────
-    print(f"\n[3/5] Extracting appearance features…")
+    print(f"\n[3/5] Extracting features…")
     tracklets, _ = build_tracklet_features(
         cameras,
         sequence=args.sequence,
@@ -426,20 +452,22 @@ def main():
         max_samples=args.max_frames_sample,
         homographies=homographies,
     )
-    # Nota: no se llama a fuse_gps_features — el GPS actúa solo como gate binario.
 
     # ── Cluster / Re-ID ──────────────────────
-    print(f"\n[4/5] Clustering tracklets (threshold={args.dist_threshold})…")
+    print(f"\n[4/5] Clustering tracklets "
+          f"(dist_threshold={args.dist_threshold}, "
+          f"geo_threshold={args.geo_threshold})…")
     global_ids = cluster_tracklets(
         tracklets,
         dist_threshold=args.dist_threshold,
-        max_speed_mps=args.max_speed_mps,
-        min_dt_s=args.min_dt_s,
+        geo_threshold=args.geo_threshold,
     )
     n_global = len(set(global_ids))
     print(f"  → Assigned {n_global} global identities "
           f"from {len(tracklets)} per-camera tracklets")
 
+    # Print a brief summary of cross-camera assignments
+    from collections import Counter
     gid_to_cams = defaultdict(set)
     for t, gid in zip(tracklets, global_ids):
         gid_to_cams[gid].add(t["cam_id"])
