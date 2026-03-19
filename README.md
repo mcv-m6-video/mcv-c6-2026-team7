@@ -99,6 +99,7 @@ Results are automatically evaluated using the official `eval.py` script.
 | `MTMC_grid.py` | Hyperparameter grid search |
 | `MTMC_gps.py` | Incorporates GPS information |
 | `MTMC_gps_clip.py` | GPS integration combined with CLIP visual features |
+| `MTMC_gps_run_all_tracking_vers.py` | GPS integration combined with the Time Windows and the `run_all_tracking.py` output format|
 | `debug_clip.py` | Creates the distribution of positive and negative pairs per each feature  |
 
 
