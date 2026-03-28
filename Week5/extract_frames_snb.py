@@ -44,7 +44,7 @@ def get_duration(video_path):
 
 
 def worker(args):
-    video_name, video_path, out_dir, width, height, sample_fps, recalc_fps = args
+    video_name, video_path, out_dir, width, height, sample_fps, recalc_fps, bar_pos = args
 
     def get_stride(src_fps):
         if sample_fps <= 0:
@@ -75,20 +75,22 @@ def worker(args):
 
         os.makedirs(out_dir, exist_ok=True)
 
+    game_name = video_name.split('/')[-2] if '/' in video_name else video_name
+
     not_done = True
     while not_done:
         stride = get_stride(fps)
         est_out_fps = fps / stride
-        print('{} -- effective fps: {} (stride: {})'.format(
-            video_name, est_out_fps, stride))
 
+        pbar = tqdm(total=num_frames, desc=game_name, unit='fr', leave=True,
+                    dynamic_ncols=True, position=bar_pos)
         i = 0
         while True:
             ret, frame = vc.read()
             if not ret:
                 # fps and num_frames are wrong
                 if i != num_frames:
-                    print('Failed to decode: {} -- {} / {}'.format(
+                    tqdm.write('Failed to decode: {} -- {} / {}'.format(
                         video_path, i, num_frames))
 
                     if i + FRAME_RETRY_THRESHOLD < num_frames:
@@ -98,7 +100,7 @@ def worker(args):
                             # Stride would not change so nothing to do
                             not_done = False
                         else:
-                            print('Retrying:', video_path)
+                            tqdm.write('Retrying: ' + video_path)
                             # Stride changes, due to large error in fps.
                             # Use adjusted fps instead.
                             vc.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -107,6 +109,7 @@ def worker(args):
                         not_done = False
                 else:
                     not_done = False
+                pbar.close()
                 break
 
             if i % stride == 0:
@@ -117,6 +120,7 @@ def worker(args):
                         frame_path = os.path.join(out_dir, 'frame{}.jpg'.format(i))
                         cv2.imwrite(frame_path, frame)
             i += 1
+            pbar.update(1)
     vc.release()
 
     out_fps = fps / get_stride(fps)
@@ -134,7 +138,7 @@ def main(args):
     sample_fps = args.sample_fps
     recalc_fps = args.recalc_fps
     num_workers = args.num_workers
-
+    
     # global RECALC_FPS_ONLY
     # RECALC_FPS_ONLY = recalc_fps
 
@@ -160,11 +164,13 @@ def main(args):
                             width,
                             height,
                             sample_fps,
-                            recalc_fps
+                            recalc_fps,
+                            len(worker_args)
                         ))
 
+    print(f'Processing {len(worker_args)} videos with {num_workers} workers...')
     with Pool(num_workers) as p:
-        for _ in tqdm(p.imap_unordered(worker, worker_args), total=len(worker_args)):
+        for _ in p.imap_unordered(worker, worker_args):
             pass
     print('Done!')
 

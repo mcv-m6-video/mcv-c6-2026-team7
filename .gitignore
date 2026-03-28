@@ -21,3 +21,6 @@ output_detections_test/
 
 .vscode
 .DS_Store
+
+*.err
+*.out
