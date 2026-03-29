@@ -40,6 +40,15 @@ class Model(BaseRGBModel):
 
             self._features = features
 
+            # Temporal encoder
+            self._pos_embed = nn.Parameter(torch.randn(1, args.clip_len + 1, self._d) * 0.02)
+            self._cls_token = nn.Parameter(torch.randn(1, 1, self._d) * 0.02)
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=self._d, nhead=8, dim_feedforward=self._d * 2,
+                dropout=0.1, batch_first=True, norm_first=True
+            )
+            self._temporal = nn.TransformerEncoder(encoder_layer, num_layers=2)
+
             # MLP for classification
             self._fc = FCLayers(self._d, args.num_classes)
 
@@ -71,8 +80,12 @@ class Model(BaseRGBModel):
                 x.view(-1, channels, height, width)
             ).reshape(batch_size, clip_len, self._d) #B, T, D
 
-            #Max pooling
-            im_feat = torch.max(im_feat, dim=1)[0] #B, D
+            # Temporal Transformer encoder with CLS token
+            cls = self._cls_token.expand(batch_size, -1, -1)   # (B, 1, D)
+            im_feat = torch.cat([cls, im_feat], dim=1)          # (B, T+1, D)
+            im_feat = im_feat + self._pos_embed
+            im_feat = self._temporal(im_feat)                   # (B, T+1, D)
+            im_feat = im_feat[:, 0, :]                          # CLS token -> (B, D)
 
             #MLP
             im_feat = self._fc(im_feat) #B, num_classes
