@@ -1,5 +1,5 @@
 {
-    "model_module": "model_classification",
+    "model_module": "model_classification_dino",
     "frame_dir": "./data/frames/398x224",
     "save_dir": "./results",
     "labels_dir": "./data/soccernetball/spotting-ball-2025/",
@@ -10,7 +10,7 @@
     "stride": 2,
     "dataset": "soccernetball",
     "epoch_num_frames": 500000,
-    "feature_arch": "rny002",
+    "feature_arch": "dinov2_small",
     "learning_rate": 0.0008,
     "num_classes": 12,
     "num_epochs": 15,

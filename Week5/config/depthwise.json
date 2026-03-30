@@ -1,5 +1,5 @@
 {
-    "model_module": "model_classification",
+    "model_module": "model_classification_depthwise",
     "frame_dir": "./data/frames/398x224",
     "save_dir": "./results",
     "labels_dir": "./data/soccernetball/spotting-ball-2025/",

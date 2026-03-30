@@ -16,10 +16,10 @@ from torch.utils.data import DataLoader
 from tabulate import tabulate
 
 #Local imports
+import importlib
 from util.io import load_json, store_json
 from util.eval_classification import evaluate
 from dataset.datasets import get_datasets
-from model.model_classification import Model
 
 
 def get_args():
@@ -73,6 +73,8 @@ def main(args):
     config_path = 'config/' + args.model + '.json'
     config = load_json(config_path)
     args = update_args(args, config)
+
+    Model = importlib.import_module(f"model.{config['model_module']}").Model
 
     # Directory for storing / reading model checkpoints
     ckpt_dir = os.path.join(args.save_dir, 'checkpoints')
