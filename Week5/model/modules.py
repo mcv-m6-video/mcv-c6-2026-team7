@@ -69,15 +69,19 @@ class FCLayers(nn.Module):
         elif len(x.shape) == 2:
             return self._fc_out(self.dropout(x))
 
-def step(optimizer, scaler, loss, lr_scheduler=None):
+def step(optimizer, scaler, loss, lr_scheduler=None, max_norm=1.0):
     if scaler is None:
         loss.backward()
-    else:
-        scaler.scale(loss).backward()
-
-    if scaler is None:
+        if max_norm is not None:
+            all_params = [p for group in optimizer.param_groups for p in group['params']]
+            torch.nn.utils.clip_grad_norm_(all_params, max_norm)
         optimizer.step()
     else:
+        scaler.scale(loss).backward()
+        if max_norm is not None:
+            scaler.unscale_(optimizer)
+            all_params = [p for group in optimizer.param_groups for p in group['params']]
+            torch.nn.utils.clip_grad_norm_(all_params, max_norm)
         scaler.step(optimizer)
         scaler.update()
     if lr_scheduler is not None:

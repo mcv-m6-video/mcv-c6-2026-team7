@@ -31,11 +31,13 @@ MODELS = {
     "dino":                "DINO",
     "convnext":            "ConvNeXt",
     "tcn":                 "TCN",
-    "temporal_transformer":"Temporal Transformer",
+    "temporal_transformer_v1":"Temporal Transformer",
+    "temporal_transformer":"Temporal Transformer V2",
+
 }
 
 # Colour-blind-friendly palette (Okabe–Ito)
-COLORS = ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00"]
+COLORS = ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#C9F9BA"]
 
 
 def load(model_key):
