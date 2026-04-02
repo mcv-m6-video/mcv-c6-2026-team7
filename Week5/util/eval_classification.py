@@ -11,6 +11,10 @@ from sklearn.metrics import average_precision_score
 #Constants
 INFERENCE_BATCH_SIZE = 4
 
+# Classes excluded from AP10 (too few examples to be reliable)
+AP10_EXCLUDED = {'FREE KICK', 'GOAL'}
+
+
 def evaluate(model, dataset, batch_size=INFERENCE_BATCH_SIZE):
     # Initialize scores and labels
     scores = []
@@ -33,3 +37,13 @@ def evaluate(model, dataset, batch_size=INFERENCE_BATCH_SIZE):
     ap_score = average_precision_score(labels, scores, average=None)  # Set to None so AP per class are not averaged
 
     return ap_score
+
+
+def compute_mAP(ap_score, classes, exclude=None):
+    """Return mean AP, optionally excluding classes by name."""
+    class_names = list(classes.keys())
+    if exclude:
+        indices = [i for i, name in enumerate(class_names) if name not in exclude]
+    else:
+        indices = list(range(len(class_names)))
+    return float(np.mean([ap_score[i] for i in indices]))

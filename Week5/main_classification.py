@@ -18,7 +18,7 @@ from tabulate import tabulate
 #Local imports
 import importlib
 from util.io import load_json, store_json
-from util.eval_classification import evaluate
+from util.eval_classification import evaluate, compute_mAP, AP10_EXCLUDED
 from dataset.datasets import get_datasets
 
 
@@ -184,23 +184,43 @@ def main(args):
     print('START INFERENCE')
     model.load(torch.load(os.path.join(ckpt_dir, 'checkpoint_best.pt')))
 
+    # Model size and MACs
+    num_params = sum(p.numel() for p in model._model.parameters())
+    try:
+        from thop import profile
+        dummy_input = torch.zeros(
+            1, args.clip_len, 3, 224, 398, device=model.device)
+        macs, _ = profile(model._model, inputs=(dummy_input,), verbose=False)
+        macs_str = f"{macs/1e9:.2f} GMACs"
+    except Exception:
+        macs_str = "N/A (install thop: pip install thop)"
+
+    print(f'\nModel params: {num_params:,}  |  MACs: {macs_str}')
+
     # Evaluation on test split
     ap_score = evaluate(model, test_data)
 
     # Report results per-class in table
     table = []
     for i, class_name in enumerate(classes.keys()):
-        table.append([class_name, f"{ap_score[i]*100:.2f}"])
+        excluded = " (*)" if class_name in AP10_EXCLUDED else ""
+        table.append([class_name + excluded, f"{ap_score[i]*100:.2f}"])
 
     headers = ["Class", "Average Precision"]
     print(tabulate(table, headers, tablefmt="grid"))
 
-    # Report average results in table
-    avg_table = [["Average", f"{np.mean(ap_score)*100:.2f}"]]
-    headers = ["", "Average Precision"]
+    # AP12 and AP10
+    map12 = compute_mAP(ap_score, classes)
+    map10 = compute_mAP(ap_score, classes, exclude=AP10_EXCLUDED)
 
-    print(tabulate(avg_table, headers, tablefmt="grid"))
-    
+    summary_table = [
+        ["AP12 (all classes)",                    f"{map12*100:.2f}"],
+        ["AP10 (excl. FREE KICK & GOAL)",         f"{map10*100:.2f}"],
+    ]
+    headers = ["Metric", "Average Precision"]
+    print(tabulate(summary_table, headers, tablefmt="grid"))
+    print("(*) excluded from AP10")
+
     print('CORRECTLY FINISHED TRAINING AND INFERENCE')
 
 
