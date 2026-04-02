@@ -1,5 +1,5 @@
 {
-    "_comment": "Ablation: focal loss only — all other settings match the original transformer run",
+    "_comment": "Ablation: focal loss only \u2014 all other settings match the original transformer run",
     "model_module": "model_classification_transformer",
     "frame_dir": "./data/frames/398x224",
     "save_dir": "./results",
@@ -16,7 +16,7 @@
     "num_classes": 12,
     "num_epochs": 12,
     "warm_up_epochs": 3,
-    "only_test": false,
+    "only_test": true,
     "device": "cuda",
     "num_workers": 12,
     "loss_type": "focal",

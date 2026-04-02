@@ -2,7 +2,7 @@
 #SBATCH --job-name=yolo_car_seg
 #SBATCH --output=logs/train_%j.out
 #SBATCH --error=logs/train_%j.err
-#SBATCH --gres=gpu:l40s:1
+#SBATCH --gres=gpu:quadro:1
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=12
 #SBATCH --time=08:00:00
@@ -26,7 +26,7 @@ export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 cd /home/maguilar/master/C6/mcv-c6-2026-team7/Week5
 # Run the automatic segmentation script
 
-for MODEL in distillation; do
-    echo "=== Training: $MODEL ==="
+for MODEL in baseline depthwise dino convnext tcn temporal_transformer ablation_backbone ablation_focal ablation_regularization ablation_backbone_focal distillation; do
+    echo "=== Evaluating: $MODEL ==="
     python main_classification.py --model $MODEL
 done
