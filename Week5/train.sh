@@ -2,10 +2,10 @@
 #SBATCH --job-name=yolo_car_seg
 #SBATCH --output=logs/train_%j.out
 #SBATCH --error=logs/train_%j.err
-#SBATCH --gres=gpu:l40s:1
+#SBATCH --gres=gpu:quadro:1
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=12
-#SBATCH --time=00:05:00
+#SBATCH --time=48:00:00
 
 # 1. Load Cluster Modules
 echo "=== Loading CUDA 12.2.2 ==="
@@ -26,7 +26,7 @@ export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 cd /home/maguilar/master/C6/mcv-c6-2026-team7/Week5
 # Run the automatic segmentation script
 
-for MODEL in temporal_transformer; do
+for MODEL in ablation_backbone ablation_focal ablation_regularization; do
     echo "=== Training: $MODEL ==="
     python main_classification.py --model $MODEL
 done

@@ -53,11 +53,13 @@ class Model(BaseRGBModel):
             # Temporal encoder
             self._pos_embed = nn.Parameter(torch.randn(1, args.clip_len + 1, self._d) * 0.02)
             self._cls_token = nn.Parameter(torch.randn(1, 1, self._d) * 0.02)
+            dropout = getattr(args, 'transformer_dropout', 0.25)
+            num_layers = getattr(args, 'transformer_layers', 3)
             encoder_layer = nn.TransformerEncoderLayer(
                 d_model=self._d, nhead=8, dim_feedforward=self._d * 2,
-                dropout=0.25, batch_first=True, norm_first=True
+                dropout=dropout, batch_first=True, norm_first=True
             )
-            self._temporal = nn.TransformerEncoder(encoder_layer, num_layers=3)
+            self._temporal = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
             # MLP for classification
             self._fc = FCLayers(self._d, args.num_classes)
@@ -158,7 +160,10 @@ class Model(BaseRGBModel):
 
                 with torch.cuda.amp.autocast():
                     pred = self._model(frame)
-                    loss = focal_loss(pred, label)
+                    if self._args.loss_type == 'focal':
+                        loss = focal_loss(pred, label)
+                    else:
+                        loss = F.binary_cross_entropy_with_logits(pred, label)
 
                 if optimizer is not None:
                     step(optimizer, scaler, loss,
