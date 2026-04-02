@@ -15,6 +15,16 @@ import torch.nn.functional as F
 #Local imports
 from model.modules import BaseRGBModel, FCLayers, step
 
+
+def focal_loss(pred, label, gamma=2.0):
+    """Binary focal loss for multi-label classification.
+    Down-weights easy examples (high pt) so the model focuses on hard ones.
+    """
+    bce = F.binary_cross_entropy_with_logits(pred, label, reduction='none')
+    pt = torch.exp(-bce)
+    return ((1 - pt) ** gamma * bce).mean()
+
+
 class Model(BaseRGBModel):
 
     class Impl(nn.Module):
@@ -43,11 +53,13 @@ class Model(BaseRGBModel):
             # Temporal encoder
             self._pos_embed = nn.Parameter(torch.randn(1, args.clip_len + 1, self._d) * 0.02)
             self._cls_token = nn.Parameter(torch.randn(1, 1, self._d) * 0.02)
+            dropout = getattr(args, 'transformer_dropout', 0.25)
+            num_layers = getattr(args, 'transformer_layers', 3)
             encoder_layer = nn.TransformerEncoderLayer(
                 d_model=self._d, nhead=8, dim_feedforward=self._d * 2,
-                dropout=0.1, batch_first=True, norm_first=True
+                dropout=dropout, batch_first=True, norm_first=True
             )
-            self._temporal = nn.TransformerEncoder(encoder_layer, num_layers=2)
+            self._temporal = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
             # MLP for classification
             self._fc = FCLayers(self._d, args.num_classes)
@@ -60,6 +72,7 @@ class Model(BaseRGBModel):
                 T.RandomApply([T.ColorJitter(contrast = (0.7, 1.2))], p = 0.25),
                 T.RandomApply([T.GaussianBlur(5)], p = 0.25),
                 T.RandomHorizontalFlip(),
+                T.RandomGrayscale(p=0.1),
             ])
 
             #Standarization
@@ -121,6 +134,13 @@ class Model(BaseRGBModel):
         self._model.to(self.device)
         self._num_classes = args.num_classes
 
+    def get_optimizer(self, opt_args):
+        return torch.optim.AdamW(
+            self._model.parameters(),
+            lr=opt_args['lr'],
+            weight_decay=0.05
+        ), torch.cuda.amp.GradScaler() if self.device == 'cuda' else None
+
     def epoch(self, loader, optimizer=None, scaler=None, lr_scheduler=None):
 
         if optimizer is None:
@@ -140,8 +160,10 @@ class Model(BaseRGBModel):
 
                 with torch.cuda.amp.autocast():
                     pred = self._model(frame)
-                    loss = F.binary_cross_entropy_with_logits(
-                            pred, label)
+                    if self._args.loss_type == 'focal':
+                        loss = focal_loss(pred, label)
+                    else:
+                        loss = F.binary_cross_entropy_with_logits(pred, label)
 
                 if optimizer is not None:
                     step(optimizer, scaler, loss,

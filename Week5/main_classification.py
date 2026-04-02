@@ -49,6 +49,9 @@ def update_args(args, config):
     args.only_test = config['only_test']
     args.device = config['device']
     args.num_workers = config['num_workers']
+    args.loss_type = config.get('loss_type', 'bce')
+    args.transformer_dropout = config.get('transformer_dropout', 0.1)
+    args.transformer_layers = config.get('transformer_layers', 2)
 
     return args
 
