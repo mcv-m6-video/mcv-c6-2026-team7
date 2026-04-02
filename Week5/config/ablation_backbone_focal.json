@@ -1,4 +1,5 @@
 {
+    "_comment": "Cumulative ablation: rny008 backbone + focal loss, original dropout/layers",
     "model_module": "model_classification_transformer",
     "frame_dir": "./data/frames/398x224",
     "save_dir": "./results",
@@ -13,12 +14,12 @@
     "feature_arch": "rny008",
     "learning_rate": 0.0002,
     "num_classes": 12,
-    "num_epochs": 25,
-    "warm_up_epochs": 5,
-    "only_test": true,
+    "num_epochs": 12,
+    "warm_up_epochs": 3,
+    "only_test": false,
     "device": "cuda",
     "num_workers": 12,
     "loss_type": "focal",
-    "transformer_dropout": 0.25,
-    "transformer_layers": 3
+    "transformer_dropout": 0.1,
+    "transformer_layers": 2
 }
