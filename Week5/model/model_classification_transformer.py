@@ -141,13 +141,12 @@ class Model(BaseRGBModel):
             weight_decay=0.05
         ), torch.cuda.amp.GradScaler() if self.device == 'cuda' else None
 
-    def epoch(self, loader, optimizer=None, scaler=None, lr_scheduler=None):
+    def epoch(self, loader, optimizer=None, scaler=None, lr_scheduler=None,
+              teacher=None, distill_alpha=0.5, distill_temp=4.0):
 
         if optimizer is None:
-            inference = True
             self._model.eval()
         else:
-            inference = False
             optimizer.zero_grad()
             self._model.train()
 
@@ -155,19 +154,28 @@ class Model(BaseRGBModel):
         with torch.no_grad() if optimizer is None else nullcontext():
             for batch_idx, batch in enumerate(tqdm(loader)):
                 frame = batch['frame'].to(self.device).float()
-                label = batch['label']
-                label = label.to(self.device).float()
+                label = batch['label'].to(self.device).float()
 
                 with torch.cuda.amp.autocast():
                     pred = self._model(frame)
+
                     if self._args.loss_type == 'focal':
-                        loss = focal_loss(pred, label)
+                        loss_hard = focal_loss(pred, label)
                     else:
-                        loss = F.binary_cross_entropy_with_logits(pred, label)
+                        loss_hard = F.binary_cross_entropy_with_logits(pred, label)
+
+                    if teacher is not None and optimizer is not None:
+                        with torch.no_grad():
+                            teacher_logits = teacher._model(frame)
+                        p_s = torch.sigmoid(pred / distill_temp)
+                        p_t = torch.sigmoid(teacher_logits / distill_temp)
+                        loss_soft = F.mse_loss(p_s, p_t)
+                        loss = distill_alpha * loss_hard + (1 - distill_alpha) * loss_soft
+                    else:
+                        loss = loss_hard
 
                 if optimizer is not None:
-                    step(optimizer, scaler, loss,
-                        lr_scheduler=lr_scheduler)
+                    step(optimizer, scaler, loss, lr_scheduler=lr_scheduler)
 
                 epoch_loss += loss.detach().item()
 
