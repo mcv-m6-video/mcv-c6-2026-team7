@@ -1,5 +1,5 @@
 {
-    "model_module": "model_classification",
+    "model_module": "model_classification_transformer",
     "frame_dir": "./data/frames/398x224",
     "save_dir": "./results",
     "labels_dir": "./data/soccernetball/spotting-ball-2025/",
@@ -11,11 +11,17 @@
     "dataset": "soccernetball",
     "epoch_num_frames": 500000,
     "feature_arch": "rny002",
-    "learning_rate": 0.0008,
+    "learning_rate": 0.0002,
     "num_classes": 12,
-    "num_epochs": 15,
-    "warm_up_epochs": 3,
+    "num_epochs": 25,
+    "warm_up_epochs": 5,
     "only_test": true,
     "device": "cuda",
-    "num_workers": 12
+    "num_workers": 12,
+    "loss_type": "focal",
+    "transformer_dropout": 0.25,
+    "transformer_layers": 2,
+    "teacher_model": "temporal_transformer",
+    "distill_alpha": 0.5,
+    "distill_temp": 4.0
 }

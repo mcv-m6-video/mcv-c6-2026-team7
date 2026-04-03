@@ -15,6 +15,16 @@ import torch.nn.functional as F
 #Local imports
 from model.modules import BaseRGBModel, FCLayers, step
 
+
+def focal_loss(pred, label, gamma=2.0):
+    """Binary focal loss for multi-label classification.
+    Down-weights easy examples (high pt) so the model focuses on hard ones.
+    """
+    bce = F.binary_cross_entropy_with_logits(pred, label, reduction='none')
+    pt = torch.exp(-bce)
+    return ((1 - pt) ** gamma * bce).mean()
+
+
 class Model(BaseRGBModel):
 
     class Impl(nn.Module):
@@ -40,6 +50,17 @@ class Model(BaseRGBModel):
 
             self._features = features
 
+            # Temporal encoder
+            self._pos_embed = nn.Parameter(torch.randn(1, args.clip_len + 1, self._d) * 0.02)
+            self._cls_token = nn.Parameter(torch.randn(1, 1, self._d) * 0.02)
+            dropout = getattr(args, 'transformer_dropout', 0.25)
+            num_layers = getattr(args, 'transformer_layers', 3)
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=self._d, nhead=8, dim_feedforward=self._d * 2,
+                dropout=dropout, batch_first=True, norm_first=True
+            )
+            self._temporal = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
             # MLP for classification
             self._fc = FCLayers(self._d, args.num_classes)
 
@@ -51,6 +72,7 @@ class Model(BaseRGBModel):
                 T.RandomApply([T.ColorJitter(contrast = (0.7, 1.2))], p = 0.25),
                 T.RandomApply([T.GaussianBlur(5)], p = 0.25),
                 T.RandomHorizontalFlip(),
+                T.RandomGrayscale(p=0.1),
             ])
 
             #Standarization
@@ -71,8 +93,12 @@ class Model(BaseRGBModel):
                 x.view(-1, channels, height, width)
             ).reshape(batch_size, clip_len, self._d) #B, T, D
 
-            #Max pooling
-            im_feat = torch.max(im_feat, dim=1)[0] #B, D
+            # Temporal Transformer encoder with CLS token
+            cls = self._cls_token.expand(batch_size, -1, -1)   # (B, 1, D)
+            im_feat = torch.cat([cls, im_feat], dim=1)          # (B, T+1, D)
+            im_feat = im_feat + self._pos_embed
+            im_feat = self._temporal(im_feat)                   # (B, T+1, D)
+            im_feat = im_feat[:, 0, :]                          # CLS token -> (B, D)
 
             #MLP
             im_feat = self._fc(im_feat) #B, num_classes
@@ -108,13 +134,19 @@ class Model(BaseRGBModel):
         self._model.to(self.device)
         self._num_classes = args.num_classes
 
-    def epoch(self, loader, optimizer=None, scaler=None, lr_scheduler=None):
+    def get_optimizer(self, opt_args):
+        return torch.optim.AdamW(
+            self._model.parameters(),
+            lr=opt_args['lr'],
+            weight_decay=0.05
+        ), torch.cuda.amp.GradScaler() if self.device == 'cuda' else None
+
+    def epoch(self, loader, optimizer=None, scaler=None, lr_scheduler=None,
+              teacher=None, distill_alpha=0.5, distill_temp=4.0):
 
         if optimizer is None:
-            inference = True
             self._model.eval()
         else:
-            inference = False
             optimizer.zero_grad()
             self._model.train()
 
@@ -122,17 +154,28 @@ class Model(BaseRGBModel):
         with torch.no_grad() if optimizer is None else nullcontext():
             for batch_idx, batch in enumerate(tqdm(loader)):
                 frame = batch['frame'].to(self.device).float()
-                label = batch['label']
-                label = label.to(self.device).float()
+                label = batch['label'].to(self.device).float()
 
                 with torch.cuda.amp.autocast():
                     pred = self._model(frame)
-                    loss = F.binary_cross_entropy_with_logits(
-                            pred, label)
+
+                    if self._args.loss_type == 'focal':
+                        loss_hard = focal_loss(pred, label)
+                    else:
+                        loss_hard = F.binary_cross_entropy_with_logits(pred, label)
+
+                    if teacher is not None and optimizer is not None:
+                        with torch.no_grad():
+                            teacher_logits = teacher._model(frame)
+                        p_s = torch.sigmoid(pred / distill_temp)
+                        p_t = torch.sigmoid(teacher_logits / distill_temp)
+                        loss_soft = F.mse_loss(p_s, p_t)
+                        loss = distill_alpha * loss_hard + (1 - distill_alpha) * loss_soft
+                    else:
+                        loss = loss_hard
 
                 if optimizer is not None:
-                    step(optimizer, scaler, loss,
-                        lr_scheduler=lr_scheduler)
+                    step(optimizer, scaler, loss, lr_scheduler=lr_scheduler)
 
                 epoch_loss += loss.detach().item()
 
