@@ -15,7 +15,7 @@ INFERENCE_BATCH_SIZE = 4
 AP10_EXCLUDED = {'FREE KICK', 'GOAL'}
 
 
-def evaluate(model, dataset, batch_size=INFERENCE_BATCH_SIZE):
+def evaluate(model, dataset, batch_size=INFERENCE_BATCH_SIZE, return_raw=False):
     # Initialize scores and labels
     scores = []
     labels = []
@@ -34,8 +34,10 @@ def evaluate(model, dataset, batch_size=INFERENCE_BATCH_SIZE):
     scores = np.concatenate(scores, axis=0)
     labels = np.concatenate(labels, axis=0)
 
-    ap_score = average_precision_score(labels, scores, average=None)  # Set to None so AP per class are not averaged
+    if return_raw:
+        return scores, labels
 
+    ap_score = average_precision_score(labels, scores, average=None)
     return ap_score
 
 
