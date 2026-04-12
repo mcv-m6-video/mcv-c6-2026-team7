@@ -22,6 +22,19 @@ from dataset.datasets import get_datasets
 from model.model_spotting import Model
 
 
+AP10_EXCLUDED = {'FREE KICK', 'GOAL'}
+
+
+def compute_mAP(ap_score, classes, exclude=None):
+    excluded = set() if exclude is None else set(exclude)
+    values = [
+        ap_score[i]
+        for i, class_name in enumerate(classes.keys())
+        if class_name not in excluded
+    ]
+    return float(np.mean(values)) if values else 0.0
+
+
 def get_args():
     #Basic arguments
     parser = argparse.ArgumentParser()
@@ -90,27 +103,27 @@ def main(args):
     def worker_init_fn(id):
         random.seed(id + epoch * 100)
 
-    # Dataloaders
-    train_loader = DataLoader(
-        train_data, shuffle=False, batch_size=args.batch_size,
-        pin_memory=True, num_workers=args.num_workers,
-        prefetch_factor=(2 if args.num_workers > 0 else None),
-        worker_init_fn=worker_init_fn
-    )
-        
-    val_loader = DataLoader(
-        val_data, shuffle=False, batch_size=args.batch_size,
-        pin_memory=True, num_workers=args.num_workers,
-        prefetch_factor=(2 if args.num_workers > 0 else None),
-        worker_init_fn=worker_init_fn
-    )
-
     # Model
     model = Model(args=args)
 
-    optimizer, scaler = model.get_optimizer({'lr': args.learning_rate})
 
     if not args.only_test:
+        optimizer, scaler = model.get_optimizer({'lr': args.learning_rate})
+    
+        # Dataloaders
+        train_loader = DataLoader(
+            train_data, shuffle=False, batch_size=args.batch_size,
+            pin_memory=True, num_workers=args.num_workers,
+            prefetch_factor=(2 if args.num_workers > 0 else None),
+            worker_init_fn=worker_init_fn
+        )
+            
+        val_loader = DataLoader(
+            val_data, shuffle=False, batch_size=args.batch_size,
+            pin_memory=True, num_workers=args.num_workers,
+            prefetch_factor=(2 if args.num_workers > 0 else None),
+            worker_init_fn=worker_init_fn
+        )
         # Warmup schedule
         num_steps_per_epoch = len(train_loader)
         num_epochs, lr_scheduler = get_lr_scheduler(
@@ -154,22 +167,41 @@ def main(args):
     print('START INFERENCE')
     model.load(torch.load(os.path.join(ckpt_dir, 'checkpoint_best.pt')))
 
+    # Model size and MACs
+    num_params = sum(p.numel() for p in model._model.parameters())
+    try:
+        from thop import profile
+        dummy_input = torch.zeros(
+            1, args.clip_len, 3, 224, 398, device=model.device)
+        macs, _ = profile(model._model, inputs=(dummy_input,), verbose=False)
+        macs_str = f"{macs/1e9:.2f} GMACs"
+    except Exception:
+        macs_str = "N/A (install thop: pip install thop)"
+
+    print(f'\nModel params: {num_params:,}  |  MACs: {macs_str}')
+
     # Evaluation on test split
-    map_score, ap_score = evaluate(model, test_data, nms_window = 5)
+    map12, ap_score = evaluate(model, test_data, nms_window = 5)
+    map10 = compute_mAP(ap_score, classes, exclude=AP10_EXCLUDED)
 
     # Report results per-class in table
     table = []
     for i, class_name in enumerate(classes.keys()):
-        table.append([class_name, f"{ap_score[i]*100:.2f}"])
+        excluded = " (*)" if class_name in AP10_EXCLUDED else ""
+        table.append([class_name + excluded, f"{ap_score[i]*100:.2f}"])
 
     headers = ["Class", "Average Precision"]
     print(tabulate(table, headers, tablefmt="grid"))
 
-    # Report average results in table
-    avg_table = [["Mean", f"{map_score*100:.2f}"]]
-    headers = ["", "Average Precision"]
+    # Report mAP12 and mAP10 in table
+    avg_table = [
+        ["mAP12 (all classes)", f"{map12*100:.2f}"],
+        ["mAP10 (excl. FREE KICK & GOAL)", f"{map10*100:.2f}"],
+    ]
+    headers = ["Metric", "Average Precision"]
 
     print(tabulate(avg_table, headers, tablefmt="grid"))
+    print("(*) excluded from mAP10")
     
     print('CORRECTLY FINISHED TRAINING AND INFERENCE')
 
