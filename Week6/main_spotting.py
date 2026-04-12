@@ -3,17 +3,33 @@
 File containing the main training script.
 """
 
-#Standard imports
+#Parse arguments
 import argparse
-import torch
 import os
+import sys
+def get_args():
+    #Basic arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model', type=str, required=True)
+    parser.add_argument('--seed', type=int, default=1)
+    parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
+    return parser.parse_args()
+
+args = get_args()
+
+# Set CUDA
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+
+#Standard imports
+import torch
 import numpy as np
 import random
 from torch.optim.lr_scheduler import (
     ChainedScheduler, LinearLR, CosineAnnealingLR)
-import sys
 from torch.utils.data import DataLoader
 from tabulate import tabulate
+import importlib
 
 #Local imports
 from util.io import load_json, store_json
@@ -21,9 +37,7 @@ from util.eval_spotting import evaluate
 from dataset.datasets import get_datasets
 from model.model_spotting import Model
 
-
 AP10_EXCLUDED = {'FREE KICK', 'GOAL'}
-
 
 def compute_mAP(ap_score, classes, exclude=None):
     excluded = set() if exclude is None else set(exclude)
@@ -33,14 +47,6 @@ def compute_mAP(ap_score, classes, exclude=None):
         if class_name not in excluded
     ]
     return float(np.mean(values)) if values else 0.0
-
-
-def get_args():
-    #Basic arguments
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, required=True)
-    parser.add_argument('--seed', type=int, default=1)
-    return parser.parse_args()
 
 def update_args(args, config):
     #Update arguments with config file
@@ -75,8 +81,14 @@ def get_lr_scheduler(args, optimizer, num_steps_per_epoch):
         CosineAnnealingLR(optimizer,
             num_steps_per_epoch * cosine_epochs)])
 
-
 def main(args):
+    # Print GPU info
+    if not torch.cuda.is_available():
+        raise RuntimeError("No CUDA GPU detected. Check --gpu argument and drivers.")
+    gpu_id = torch.cuda.current_device()
+    gpu_name = torch.cuda.get_device_name(gpu_id)
+    print(f"Using GPU {gpu_id}: {gpu_name}  (CUDA_VISIBLE_DEVICES='{args.gpu}')")
+
     # Set seed
     print('Setting seed to: ', args.seed)
     torch.manual_seed(args.seed)
@@ -86,6 +98,8 @@ def main(args):
     config_path = 'config/' + args.model + '.json'
     config = load_json(config_path)
     args = update_args(args, config)
+
+    Model = importlib.import_module(f"model.{config['model_module']}").Model
 
     # Directory for storing / reading model checkpoints
     ckpt_dir = os.path.join(args.save_dir, 'checkpoints')
@@ -105,7 +119,6 @@ def main(args):
 
     # Model
     model = Model(args=args)
-
 
     if not args.only_test:
         optimizer, scaler = model.get_optimizer({'lr': args.learning_rate})
@@ -205,6 +218,5 @@ def main(args):
     
     print('CORRECTLY FINISHED TRAINING AND INFERENCE')
 
-
 if __name__ == '__main__':
-    main(get_args())
+    main(args)
