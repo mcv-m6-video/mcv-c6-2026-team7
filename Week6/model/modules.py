@@ -69,6 +69,40 @@ class FCLayers(nn.Module):
         elif len(x.shape) == 2:
             return self._fc_out(self.dropout(x))
 
+
+class TemporalResidualBlock(nn.Module):
+
+    def __init__(self, feat_dim, dilation=1, dropout=0.1, activation='gelu'):
+        super().__init__()
+        self.norm = nn.LayerNorm(feat_dim)
+
+        # With kernel size 3 and stride 1, padding=dilation preserves T.
+        self.conv1 = nn.Conv1d(
+            feat_dim, feat_dim, kernel_size=3,
+            dilation=dilation, padding=dilation)
+        self.conv2 = nn.Conv1d(
+            feat_dim, feat_dim, kernel_size=3,
+            dilation=dilation, padding=dilation)
+
+        if activation.lower() == 'relu':
+            self.activation = nn.ReLU()
+        else:
+            self.activation = nn.GELU()
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        # x: [B, T, D]
+        residual = x
+        x = self.norm(x)
+        x = x.transpose(1, 2)  # [B, D, T]
+        x = self.conv1(x)
+        x = self.activation(x)
+        x = self.dropout(x)
+        x = self.conv2(x)
+        x = x.transpose(1, 2)  # [B, T, D]
+        return residual + x
+
 def step(optimizer, scaler, loss, lr_scheduler=None):
     if scaler is None:
         loss.backward()

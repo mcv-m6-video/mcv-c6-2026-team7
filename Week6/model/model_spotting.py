@@ -13,7 +13,7 @@ import torch.nn.functional as F
 
 
 #Local imports
-from model.modules import BaseRGBModel, FCLayers, step
+from model.modules import BaseRGBModel, FCLayers, TemporalResidualBlock, step
 
 class Model(BaseRGBModel):
 
@@ -36,9 +36,29 @@ class Model(BaseRGBModel):
                 self._d = feat_dim
 
             else:
-                raise NotImplementedError(args._feature_arch)
+                raise NotImplementedError(args.feature_arch)
 
             self._features = features
+
+            self._temporal_block = getattr(args, 'temporal_block', 'none')
+            temporal_dilations = getattr(args, 'temporal_dilations', [1, 2, 4, 8])
+            temporal_dropout = float(getattr(args, 'temporal_dropout', 0.1))
+
+            if self._temporal_block not in {'none', 'tcn'}:
+                raise ValueError(
+                    f'Unsupported temporal_block={self._temporal_block}. '
+                    'Expected one of {"none", "tcn"}.')
+
+            if self._temporal_block == 'tcn':
+                self._temporal = nn.Sequential(*[
+                    TemporalResidualBlock(
+                        self._d,
+                        dilation=int(dilation),
+                        dropout=temporal_dropout)
+                    for dilation in temporal_dilations
+                ])
+            else:
+                self._temporal = nn.Identity()
 
             # MLP for classification
             self._fc = FCLayers(self._d, args.num_classes+1) # +1 for background class (we now perform per-frame classification with softmax, therefore we have the extra background class)
@@ -71,10 +91,13 @@ class Model(BaseRGBModel):
                 x.view(-1, channels, height, width)
             ).reshape(batch_size, clip_len, self._d) #B, T, D
 
-            #MLP
-            im_feat = self._fc(im_feat) #B, T, num_classes+1
+            # Temporal mixing on frame features while preserving clip length T.
+            im_feat = self._temporal(im_feat) #B, T, D
 
-            return im_feat 
+            # Per-frame logits for (background + classes).
+            pred_logits = self._fc(im_feat) #B, T, num_classes+1
+
+            return pred_logits
         
         def normalize(self, x):
             return x / 255.
@@ -95,7 +118,7 @@ class Model(BaseRGBModel):
 
     def __init__(self, args=None):
         self.device = "cpu"
-        if torch.cuda.is_available() and ("device" in args) and (args.device == "cuda"):
+        if torch.cuda.is_available() and getattr(args, 'device', 'cpu') == "cuda":
             self.device = "cuda"
 
         self._model = Model.Impl(args=args)
@@ -125,11 +148,12 @@ class Model(BaseRGBModel):
                 label = label.to(self.device).long()
 
                 with torch.cuda.amp.autocast():
-                    pred = self._model(frame)
-                    pred = pred.view(-1, self._num_classes + 1) # B*T, num_classes
-                    label = label.view(-1) # B*T
+                    pred_logits = self._model(frame) # B, T, num_classes+1
                     loss = F.cross_entropy(
-                            pred, label, reduction='mean', weight = weights)
+                        pred_logits.reshape(-1, self._num_classes + 1),
+                        label.reshape(-1),
+                        reduction='mean',
+                        weight=weights)
 
                 if optimizer is not None:
                     step(optimizer, scaler, loss,
@@ -152,10 +176,10 @@ class Model(BaseRGBModel):
         self._model.eval()
         with torch.no_grad():
             with torch.cuda.amp.autocast():
-                pred = self._model(seq)
+                pred_logits = self._model(seq) # B, T, num_classes+1
 
-            # apply sigmoid
-            pred = torch.softmax(pred, dim=-1)
+            # Convert logits to per-frame class probabilities.
+            pred = torch.softmax(pred_logits, dim=-1)
             
             return pred.cpu().numpy()
         
