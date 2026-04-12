@@ -45,6 +45,20 @@ class Model(BaseRGBModel):
 
             self._features = features
 
+            # Temporal transformer
+            self._pos_embed = nn.Parameter(torch.randn(1, args.clip_len, self._d) * 0.02)
+            dropout = getattr(args, 'transformer_dropout', 0.25)
+            num_layers = getattr(args, 'transformer_layers', 3)
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=self._d, 
+                nhead=8, 
+                dim_feedforward=self._d * 2,
+                dropout=dropout, 
+                batch_first=True, 
+                norm_first=True
+            )
+            self._temporal = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
             # MLP for classification
             self._fc = FCLayers(self._d, args.num_classes+1) # +1 for background class (we now perform per-frame classification with softmax, therefore we have the extra background class)
 
@@ -75,6 +89,10 @@ class Model(BaseRGBModel):
             im_feat = self._features(
                 x.view(-1, channels, height, width)
             ).reshape(batch_size, clip_len, self._d) #B, T, D
+
+            # Temporal transformer
+            im_feat = im_feat + self._pos_embed
+            im_feat = self._temporal(im_feat) #B, T, D
 
             #MLP
             im_feat = self._fc(im_feat) #B, T, num_classes+1
