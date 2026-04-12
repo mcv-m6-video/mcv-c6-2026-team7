@@ -18,6 +18,7 @@ Here we describe the different parameters set in the baseline configuration file
 - _num_epochs:_ Number of epochs for training.
 - _warm_up_epochs:_ Number of warm-up epochs.
 - _only_test:_ Boolean indicating whether only inference or training + inference.
+- _map_train_val_eval_interval:_ Integer interval for train/val mAP12 and mAP10 evaluation during training. Use 0 to disable. Use 3 to evaluate at epochs 3, 6, 9, etc. (1-indexed, slower training when enabled).
 - _device:_ Either "cuda" or "cpu".
 - _num_workers:_ Number of workers.
 

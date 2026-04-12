@@ -15,6 +15,7 @@
     "num_epochs": 20,
     "warm_up_epochs": 3,
     "only_test": false,
+    "map_train_val_eval_interval": 0,
     "device": "cuda",
     "num_workers": 8
 }

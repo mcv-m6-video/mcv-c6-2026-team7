@@ -60,6 +60,11 @@ def update_args(args, config):
     args.num_epochs = config['num_epochs']
     args.warm_up_epochs = config['warm_up_epochs']
     args.only_test = config['only_test']
+    map_eval_interval = config.get('map_train_val_eval_interval', None)
+    if map_eval_interval is None:
+        # Backward compatibility with older boolean configs.
+        map_eval_interval = 1 if bool(config.get('compute_map_train_val', False)) else 0
+    args.map_train_val_eval_interval = max(0, int(map_eval_interval))
     args.device = config['device']
     args.num_workers = config['num_workers']
 
@@ -92,7 +97,7 @@ def main(args):
     os.makedirs(ckpt_dir, exist_ok=True)
 
     # Get datasets train, validation (and validation for map -> Video dataset)
-    classes, train_data, val_data, test_data = get_datasets(args)
+    classes, train_data, val_data, test_data, train_map_data, val_map_data = get_datasets(args)
 
     if args.store_mode == 'store':
         print('Datasets have been stored correctly! Re-run changing "mode" to "load" in the config JSON.')
@@ -131,6 +136,7 @@ def main(args):
         
         losses = []
         best_criterion = float('inf')
+        map_eval_interval = args.map_train_val_eval_interval
         epoch = 0
 
         print('START TRAINING EPOCHS')
@@ -142,20 +148,51 @@ def main(args):
             
             val_loss = model.epoch(val_loader)
 
+            train_map12 = None
+            train_map10 = None
+            val_map12 = None
+            val_map10 = None
+            run_map_eval = (
+                map_eval_interval > 0 and ((epoch + 1) % map_eval_interval == 0)
+            )
+            if run_map_eval:
+                train_map12, train_ap_score = evaluate(model, train_map_data, nms_window=5)
+                train_map10 = compute_mAP(train_ap_score, classes, exclude=AP10_EXCLUDED)
+
+                val_map12, val_ap_score = evaluate(model, val_map_data, nms_window=5)
+                val_map10 = compute_mAP(val_ap_score, classes, exclude=AP10_EXCLUDED)
+
             better = False
             if val_loss < best_criterion:
                 best_criterion = val_loss
                 better = True
             
             #Printing info epoch
-            print('[Epoch {}] Train loss: {:0.5f} Val loss: {:0.5f}'.format(
-                epoch, train_loss, val_loss))
+            if run_map_eval:
+                print(
+                    '[Epoch {}] Train loss: {:0.5f} Val loss: {:0.5f} '
+                    'Train mAP12: {:0.5f} Train mAP10: {:0.5f} '
+                    'Val mAP12: {:0.5f} Val mAP10: {:0.5f}'.format(
+                        epoch, train_loss, val_loss,
+                        train_map12, train_map10, val_map12, val_map10)
+                )
+            else:
+                print('[Epoch {}] Train loss: {:0.5f} Val loss: {:0.5f}'.format(
+                    epoch, train_loss, val_loss))
             if better:
-                print('New best mAP epoch!')
+                print('New best val-loss epoch!')
 
-            losses.append({
-                'epoch': epoch, 'train': train_loss, 'val': val_loss
-            })
+            epoch_log = {
+                'epoch': epoch,
+                'train': train_loss,
+                'val': val_loss,
+            }
+            if map_eval_interval > 0:
+                epoch_log['train_map12'] = train_map12
+                epoch_log['train_map10'] = train_map10
+                epoch_log['val_map12'] = val_map12
+                epoch_log['val_map10'] = val_map10
+            losses.append(epoch_log)
 
             if args.save_dir is not None:
                 os.makedirs(args.save_dir, exist_ok=True)
