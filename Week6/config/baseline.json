@@ -1,8 +1,8 @@
 {
     "model_module": "model_spotting",
-    "frame_dir": "/data-fast/data-server/adonaire/SN-BAS-2025_frames/398x224",
-    "save_dir": "/data-fast/data-server/adonaire/SN-BAS-2025_savedata",
-    "labels_dir": "/data-fast/data-server/adonaire/SN-BAS-2025",
+   "frame_dir": "./data/frames/398x224",
+    "save_dir": "./results",
+    "labels_dir": "./data/soccernetball/spotting-ball-2025/",
     "store_mode": "load",
     "task": "spotting",
     "batch_size": 16,

@@ -25,14 +25,25 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # ── Model data ─────────────────────────────────────────────────────────────────
 # Each entry: label, GMACs, mAP10, num_params
 MODELS = [
-    # ("Baseline (rny002)",          ??,     ??,    ?),   # no complete log found
+    ("Baseline",          18.11,     4.83,   2_798_793 ),   # no complete log found
     ("Baseline Rny004",            36.22,  14.53, 3_908_877),
     ("Baseline Rny008",            71.45,  14.70, 5_504_165),
-    ("Temporal Transformer Rny004",36.22,  32.25, 8_591_797),
+    ("Temporal Transformer + Rny004", 36.22,  32.25, 8_591_797),
+    ("ConvNextV2 Pico", 47.37,  5.05, 3_700_000),
+    ("ConvNextV2 Atto", 47.37,  5.05, 3_700_000),
+    ("Temporal Transformer + Rny002", 18.18,  12.64, 6_079_513),
+    ("Residual BiGRU", 36.31,  29.64, 5_657_437),
+    ("Residual BiGRU + Focal Loss", 36.31,  32.87, 5_657_437),
+    ("Residual BiGRU + TGLS", 36.31,  33.79, 5_657_437),
+    ("Temporal Transformer + Rny004 + TGLS", 36.22,  27.9, 8_591_797),
+    ("1D Convs", 36.22,  12.94, 3_908_877),
 ]
 
 # Colour-blind-friendly palette (Okabe–Ito)
-COLORS = ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#C9F9BA"]
+COLORS = [
+    "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7",
+    "#4B0082", "#FF6F61", "#2ECC71", "#A0522D", "#00CED1",
+]
 
 # ── Bubble scaling ─────────────────────────────────────────────────────────────
 # Map num_params → marker area (s). We scale relative to the largest model so
@@ -42,25 +53,9 @@ params_arr = np.array([m[3] for m in MODELS], dtype=float)
 areas      = (params_arr / params_arr.max()) * MAX_AREA
 
 
-def _repulsion_offset(i, xy_disp, area, pad_pts=10):
-    """Return (dx, dy) in typographic points for label i, pushed away from all
-    other points using a sum-of-unit-vectors repulsion in display space."""
-    p = xy_disp[i]
-    others = np.delete(xy_disp, i, axis=0)
-    if len(others):
-        diffs = p - others                               # vectors away from others
-        dists = np.linalg.norm(diffs, axis=1, keepdims=True).clip(1e-6)
-        direction = (diffs / dists).sum(axis=0)          # sum of unit vectors
-    else:
-        direction = np.array([0.0, 1.0])
-    norm = np.linalg.norm(direction)
-    direction /= max(norm, 1e-6)
-    total_pts = np.sqrt(area / np.pi) + pad_pts          # bubble radius + padding
-    return direction * total_pts                         # (dx, dy) in pts
-
 
 def plot_bubble():
-    fig, ax = plt.subplots(figsize=(9, 6))
+    fig, ax = plt.subplots(figsize=(10, 5))
 
     xs     = [m[1] for m in MODELS]
     ys     = [m[2] for m in MODELS]
@@ -75,44 +70,32 @@ def plot_bubble():
             edgecolors="white",
             linewidths=1.2,
             zorder=3,
-        )
-        ax.text(
-            gmacs, map10,
-            f"{params/1e6:.2f}M",
-            ha="center", va="center",
-            fontsize=8, fontweight="bold",
-            color="white", zorder=4,
+            label=label,
         )
 
-    # Compute repulsion directions after axis limits are set
     all_x, all_y = xs, ys
-    x_pad = (max(all_x) - min(all_x)) * 0.35 + 5
-    y_pad = (max(all_y) - min(all_y)) * 0.25 + 2
+    x_pad = (max(all_x) - min(all_x)) * 0.05 + 5
+    y_pad = (max(all_y) - min(all_y)) * 0.10 + 2
     ax.set_xlim(min(all_x) - x_pad, max(all_x) + x_pad)
     ax.set_ylim(min(all_y) - y_pad, max(all_y) + y_pad)
-
-    fig.canvas.draw()                                    # needed for transData
-    xy_disp = ax.transData.transform(np.column_stack([xs, ys]))
-
-    for i, (label, gmacs, map10, _) in enumerate(MODELS):
-        dx, dy = _repulsion_offset(i, xy_disp, areas[i])
-        ax.annotate(
-            label,
-            xy=(gmacs, map10),
-            xytext=(dx, dy),
-            textcoords="offset points",
-            ha="center", va="center",
-            fontsize=9,
-        )
 
     ax.set_xlabel("GMACs")
     ax.set_ylabel("mAP10")
     ax.set_title("Model Efficiency: GMACs vs mAP10\n(bubble size ∝ # parameters)",
                  fontweight="bold")
 
-    ax.legend().set_visible(False)
+    handles = [
+        plt.Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor=COLORS[i % len(COLORS)],
+                   markersize=8, label=label)
+        for i, (label, *_) in enumerate(MODELS)
+    ]
+    ax.legend(handles=handles, loc="center left",
+              bbox_to_anchor=(1.02, 0.5),
+              framealpha=0.8, borderaxespad=0)
 
     fig.tight_layout()
+    fig.subplots_adjust(right=0.72)
     out = os.path.join(OUTPUT_DIR, "efficiency_bubble.png")
     fig.savefig(out, dpi=200, bbox_inches="tight")
     print(f"Saved: {out}")
