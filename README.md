@@ -10,6 +10,7 @@ This week we experiment with different **video action spotting** approaches usin
 
 Our best-performing model combines:
 
+- RegNetY-004
 - Residual Bidirectional GRU
 - Temporal Gaussian Label Smoothing
 
