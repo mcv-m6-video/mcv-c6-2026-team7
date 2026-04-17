@@ -8,11 +8,13 @@ import argparse
 import os
 import sys
 def get_args():
-    #Basic arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, required=True)
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
+    parser.add_argument('--save_metric', type=str, default='val_loss', 
+                        choices=['val_loss', 'map10_1', 'map10_0.5'], 
+                        help='Metric used to save the best checkpoint')
     return parser.parse_args()
 
 args = get_args()
@@ -25,6 +27,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 import torch
 import numpy as np
 import random
+import matplotlib.pyplot as plt
 from torch.optim.lr_scheduler import (
     ChainedScheduler, LinearLR, CosineAnnealingLR)
 from torch.utils.data import DataLoader
@@ -69,6 +72,9 @@ def update_args(args, config):
     args.device = config['device']
     args.num_workers = config['num_workers']
 
+    args.use_focal_loss = config.get('use_focal_loss', False)
+    args.focal_gamma = config.get('focal_gamma', 2.0)
+
     return args
 
 def get_lr_scheduler(args, optimizer, num_steps_per_epoch):
@@ -80,6 +86,44 @@ def get_lr_scheduler(args, optimizer, num_steps_per_epoch):
                  total_iters=args.warm_up_epochs * num_steps_per_epoch),
         CosineAnnealingLR(optimizer,
             num_steps_per_epoch * cosine_epochs)])
+
+def plot_metrics(metrics_log, save_dir, model_name):
+    epochs_list = [m['epoch'] for m in metrics_log]
+    train_losses = [m['train_loss'] for m in metrics_log]
+    val_losses = [m['val_loss'] for m in metrics_log]
+    val_map05 = [m['val_map10_0.5'] for m in metrics_log]
+    val_map10 = [m['val_map10_1.0'] for m in metrics_log]
+
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+
+    # Losses
+    color_loss = '#d62728' 
+    ax1.set_xlabel('Epoch', fontweight='bold')
+    ax1.set_ylabel('Loss', color=color_loss, fontweight='bold')
+    line1, = ax1.plot(epochs_list, train_losses, color=color_loss, linestyle='--', linewidth=2, label='Train Loss')
+    line2, = ax1.plot(epochs_list, val_losses, color=color_loss, linestyle='-', linewidth=2, label='Val Loss')
+    ax1.tick_params(axis='y', labelcolor=color_loss)
+    ax1.grid(True, alpha=0.3)
+
+    # mAP
+    ax2 = ax1.twinx()  
+    color_map = '#1f77b4' 
+    ax2.set_ylabel('mAP10', color=color_map, fontweight='bold')
+    line3, = ax2.plot(epochs_list, val_map05, color=color_map, linestyle='--', linewidth=2, label='Val mAP10@0.5')
+    line4, = ax2.plot(epochs_list, val_map10, color=color_map, linestyle='-', linewidth=2, label='Val mAP10@1.0')
+    ax2.tick_params(axis='y', labelcolor=color_map)
+
+    # Title and Legends
+    plt.title(f'Training Metrics Evolution ({model_name})', fontweight='bold', pad=15)
+    
+    lines = [line1, line2, line3, line4]
+    labels = [l.get_label() for l in lines]
+    ax1.legend(lines, labels, loc='center right', bbox_to_anchor=(1.35, 0.5))
+
+    fig.tight_layout() 
+    
+    plt.savefig(os.path.join(save_dir, 'metrics_plot.png'), dpi=300, bbox_inches='tight')
+    plt.close(fig)
 
 def main(args):
     # Print GPU info
@@ -106,7 +150,7 @@ def main(args):
     os.makedirs(ckpt_dir, exist_ok=True)
 
     # Get datasets train, validation (and validation for map -> Video dataset)
-    classes, train_data, val_data, test_data = get_datasets(args)
+    classes, train_data, val_data, val_video_data, test_data = get_datasets(args)
 
     if args.store_mode == 'store':
         print('Datasets have been stored correctly! Re-run changing "mode" to "load" in the config JSON.')
@@ -142,8 +186,8 @@ def main(args):
         num_epochs, lr_scheduler = get_lr_scheduler(
             args, optimizer, num_steps_per_epoch)
         
-        losses = []
-        best_criterion = float('inf')
+        metrics_log = []
+        best_criterion = float('inf') if args.save_metric == 'val_loss' else -float('inf')
         epoch = 0
 
         print('START TRAINING EPOCHS')
@@ -154,25 +198,41 @@ def main(args):
                 lr_scheduler=lr_scheduler)
             
             val_loss = model.epoch(val_loader)
+            val_mAP_dict, val_AP_per_class_dict = evaluate(model, val_video_data, nms_window=5)
+            val_map10_05 = compute_mAP(val_AP_per_class_dict[0.5], classes, exclude=AP10_EXCLUDED)
+            val_map10_10 = compute_mAP(val_AP_per_class_dict[1.0], classes, exclude=AP10_EXCLUDED)
 
             better = False
-            if val_loss < best_criterion:
-                best_criterion = val_loss
-                better = True
+            if args.save_metric == 'val_loss':
+                if val_loss < best_criterion:
+                    best_criterion = val_loss
+                    better = True
+            elif args.save_metric == 'map10_1':
+                if val_map10_10 > best_criterion:
+                    best_criterion = val_map10_10
+                    better = True
+            elif args.save_metric == 'map10_0.5':
+                if val_map10_05 > best_criterion:
+                    best_criterion = val_map10_05
+                    better = True
             
-            #Printing info epoch
-            print('[Epoch {}] Train loss: {:0.5f} Val loss: {:0.5f}'.format(
-                epoch, train_loss, val_loss))
+            print('[Epoch {}] Train loss: {:0.5f} Val loss: {:0.5f} | Val mAP10@0.5: {:0.5f} | Val mAP10@1.0: {:0.5f}'.format(
+                epoch, train_loss, val_loss, val_map10_05, val_map10_10))
             if better:
-                print('New best mAP epoch!')
+                print(f'New best model epoch based on {args.save_metric}!')
 
-            losses.append({
-                'epoch': epoch, 'train': train_loss, 'val': val_loss
+            metrics_log.append({
+                'epoch': epoch, 
+                'train_loss': train_loss, 
+                'val_loss': val_loss,
+                'val_map10_0.5': val_map10_05,
+                'val_map10_1.0': val_map10_10
             })
 
             if args.save_dir is not None:
                 os.makedirs(args.save_dir, exist_ok=True)
-                store_json(os.path.join(args.save_dir, 'loss.json'), losses, pretty=True)
+                store_json(os.path.join(args.save_dir, 'metrics.json'), metrics_log, pretty=True)
+                plot_metrics(metrics_log, args.save_dir, args.model)
 
                 if better:
                     torch.save( model.state_dict(), os.path.join(ckpt_dir, 'checkpoint_best.pt') )
@@ -188,32 +248,49 @@ def main(args):
             1, args.clip_len, 3, 224, 398, device=model.device)
         macs, _ = profile(model._model, inputs=(dummy_input,), verbose=False)
         macs_str = f"{macs/1e9:.2f} GMACs"
-    except Exception:
+    except Exception as e:
         macs_str = "N/A (install thop: pip install thop)"
+        print(f"Thop failed with error: {e}")
 
     print(f'\nModel params: {num_params:,}  |  MACs: {macs_str}')
 
     # Evaluation on test split
-    map12, ap_score = evaluate(model, test_data, nms_window = 5)
-    map10 = compute_mAP(ap_score, classes, exclude=AP10_EXCLUDED)
+    mAP_dict, AP_per_class_dict = evaluate(model, test_data, nms_window=5)
+    
+    # Get the sorted list of tolerances
+    tolerances = sorted(mAP_dict.keys())
+
+    # Compute mAP10 for each tolerance
+    map10_dict = {}
+    for delta in tolerances:
+        map10_dict[delta] = compute_mAP(AP_per_class_dict[delta], classes, exclude=AP10_EXCLUDED)
 
     # Report results per-class in table
     table = []
     for i, class_name in enumerate(classes.keys()):
         excluded = " (*)" if class_name in AP10_EXCLUDED else ""
-        table.append([class_name + excluded, f"{ap_score[i]*100:.2f}"])
+        row = [class_name + excluded]
+        for delta in tolerances:
+            row.append(f"{AP_per_class_dict[delta][i]*100:.2f}")
+        table.append(row)
 
-    headers = ["Class", "Average Precision"]
+    headers = ["Class"] + [f"AP @ {delta}s" for delta in tolerances]
     print(tabulate(table, headers, tablefmt="grid"))
 
     # Report mAP12 and mAP10 in table
-    avg_table = [
-        ["mAP12 (all classes)", f"{map12*100:.2f}"],
-        ["mAP10 (excl. FREE KICK & GOAL)", f"{map10*100:.2f}"],
-    ]
-    headers = ["Metric", "Average Precision"]
+    avg_table = []
+    row_map12 = ["mAP12 (all classes)"]
+    row_map10 = ["mAP10 (excl. FREE KICK & GOAL)"]
+    
+    for delta in tolerances:
+        row_map12.append(f"{mAP_dict[delta]*100:.2f}")
+        row_map10.append(f"{map10_dict[delta]*100:.2f}")
+        
+    avg_table.append(row_map12)
+    avg_table.append(row_map10)
 
-    print(tabulate(avg_table, headers, tablefmt="grid"))
+    avg_headers = ["Metric"] + [f"mAP @ {delta}s" for delta in tolerances]
+    print(tabulate(avg_table, avg_headers, tablefmt="grid"))
     print("(*) excluded from mAP10")
     
     print('CORRECTLY FINISHED TRAINING AND INFERENCE')

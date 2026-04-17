@@ -90,14 +90,21 @@ def evaluate(model, dataset, batch_size=INFERENCE_BATCH_SIZE, nms_window = 5):
                 closest_numpy[start:stop, c] = targets[indexes[i], c]
         closests_numpy.append(closest_numpy)
 
-    # Compute the performances
-    mAP, AP_per_class, _, _, _, _ = (
-        average_mAP(targets_numpy, detections_numpy, closests_numpy, FPS_SN / dataset._stride, deltas=np.array([1]))
-    )
+    # Compute the performances for multiple tolerances
+    deltas = [0.5, 1.0]
+    mAP_dict = {}
+    AP_per_class_dict = {}
 
-    return mAP, AP_per_class
+    for delta in deltas:
+        mAP, AP_per_class, _, _, _, _ = average_mAP(
+            targets_numpy, detections_numpy, closests_numpy, 
+            FPS_SN / dataset._stride, deltas=np.array([delta])
+        )
+        mAP_dict[delta] = mAP
+        AP_per_class_dict[delta] = AP_per_class
+
+    return mAP_dict, AP_per_class_dict
     
-
 
 def apply_NMS(predictions, window, thresh=0.0):
 
