@@ -24,6 +24,7 @@ os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
 #Standard imports
+import importlib
 import torch
 import numpy as np
 import random
@@ -32,15 +33,17 @@ from torch.optim.lr_scheduler import (
     ChainedScheduler, LinearLR, CosineAnnealingLR)
 from torch.utils.data import DataLoader
 from tabulate import tabulate
-import importlib
 
 #Local imports
 from util.io import load_json, store_json
 from util.eval_spotting import evaluate
+from util.early_stopping import EarlyStopping
+from util.wandb_logger import WandbLogger
 from dataset.datasets import get_datasets
-from model.model_spotting import Model
 
 AP10_EXCLUDED = {'FREE KICK', 'GOAL'}
+SUPPORTED_METRICS = {'val_loss', 'map10_1', 'map10_0.5'}
+SUPPORTED_MODEL_MODULES = {'residual_bigru_TGLS', 'temporal_transformer_TGLS'}
 
 def compute_mAP(ap_score, classes, exclude=None):
     excluded = set() if exclude is None else set(exclude)
@@ -53,6 +56,7 @@ def compute_mAP(ap_score, classes, exclude=None):
 
 def update_args(args, config):
     #Update arguments with config file
+    args.model_module = config.get('model_module', 'residual_bigru_TGLS')
     args.frame_dir = config['frame_dir']
     args.save_dir = config['save_dir'] + '/' + args.model # + '-' + str(args.seed) -> in case multiple seeds
     args.store_dir = config['save_dir'] + '/' + "splits"
@@ -72,20 +76,73 @@ def update_args(args, config):
     args.device = config['device']
     args.num_workers = config['num_workers']
 
-    args.use_focal_loss = config.get('use_focal_loss', False)
-    args.focal_gamma = config.get('focal_gamma', 2.0)
+    args.backbone_pretrained = config.get('backbone_pretrained', True)
+    args.freeze_backbone = config.get('freeze_backbone', False)
+    args.transformer_layers = config.get('transformer_layers', 3)
+    args.transformer_dropout = config.get('transformer_dropout', 0.25)
+    args.transformer_nhead = config.get('transformer_nhead', 8)
+    args.label_smoothing_window = config.get('label_smoothing_window', 5)
+    args.label_smoothing_sigma = config.get('label_smoothing_sigma', 0.55)
+    args.save_metric = config.get('save_metric', args.save_metric)
+    args.early_stopping_metric = config.get('early_stopping_metric', 'val_loss')
+    args.early_stopping_patience = config.get('early_stopping_patience', 5)
 
     return args
 
+def validate_model_module(args):
+    if args.model_module not in SUPPORTED_MODEL_MODULES:
+        raise ValueError('Unsupported model_module "{}". Expected one of: {}'.format(args.model_module, sorted(SUPPORTED_MODEL_MODULES)))
+
+def build_model(args):
+    model_module = importlib.import_module('model.' + args.model_module)
+    model_class = getattr(model_module, 'Model')
+    return model_class(args=args)
+
+def validate_metric(metric_name, field_name):
+    if metric_name not in SUPPORTED_METRICS:
+        raise ValueError('Unsupported {} "{}". Expected one of: {}'.format(field_name, metric_name, sorted(SUPPORTED_METRICS)))
+
+def get_metric_value(metric_name, val_loss, val_map10_05, val_map10_10):
+    metric_values = {
+        'val_loss': val_loss,
+        'map10_0.5': val_map10_05,
+        'map10_1': val_map10_10,
+    }
+    return metric_values[metric_name]
+
+def is_better(metric_name, current_value, best_value):
+    if metric_name == 'val_loss':
+        return current_value < best_value
+    return current_value > best_value
+
 def get_lr_scheduler(args, optimizer, num_steps_per_epoch):
-    cosine_epochs = args.num_epochs - args.warm_up_epochs
-    print('Using Linear Warmup ({}) + Cosine Annealing LR ({})'.format(
-        args.warm_up_epochs, cosine_epochs))
-    return args.num_epochs, ChainedScheduler([
-        LinearLR(optimizer, start_factor=0.01, end_factor=1.0,
-                 total_iters=args.warm_up_epochs * num_steps_per_epoch),
-        CosineAnnealingLR(optimizer,
-            num_steps_per_epoch * cosine_epochs)])
+    num_epochs = int(args.num_epochs)
+    warmup_epochs = min(int(args.warm_up_epochs), num_epochs)
+    cosine_epochs = num_epochs - warmup_epochs
+
+    if warmup_epochs > 0 and cosine_epochs > 0:
+        print('Using Linear Warmup ({}) + Cosine Annealing LR ({})'.format(
+            warmup_epochs, cosine_epochs))
+        return num_epochs, ChainedScheduler([
+            LinearLR(optimizer, start_factor=0.01, end_factor=1.0,
+                     total_iters=warmup_epochs * num_steps_per_epoch),
+            CosineAnnealingLR(optimizer,
+                num_steps_per_epoch * cosine_epochs)])
+
+    if warmup_epochs > 0:
+        print('Using Linear Warmup ({}) only'.format(warmup_epochs))
+        return num_epochs, LinearLR(
+            optimizer,
+            start_factor=0.01,
+            end_factor=1.0,
+            total_iters=warmup_epochs * num_steps_per_epoch,
+        )
+
+    print('Using Cosine Annealing LR ({}) without warmup'.format(cosine_epochs))
+    return num_epochs, CosineAnnealingLR(
+        optimizer,
+        num_steps_per_epoch * cosine_epochs,
+    )
 
 def plot_metrics(metrics_log, save_dir, model_name):
     epochs_list = [m['epoch'] for m in metrics_log]
@@ -142,8 +199,11 @@ def main(args):
     config_path = 'config/' + args.model + '.json'
     config = load_json(config_path)
     args = update_args(args, config)
+    validate_model_module(args)
+    validate_metric(args.save_metric, 'save_metric')
+    validate_metric(args.early_stopping_metric, 'early_stopping_metric')
 
-    Model = importlib.import_module(f"model.{config['model_module']}").Model
+    wandb_logger = WandbLogger(config=config, args=args)
 
     # Directory for storing / reading model checkpoints
     ckpt_dir = os.path.join(args.save_dir, 'checkpoints')
@@ -162,7 +222,7 @@ def main(args):
         random.seed(id + epoch * 100)
 
     # Model
-    model = Model(args=args)
+    model = build_model(args)
 
     if not args.only_test:
         optimizer, scaler = model.get_optimizer({'lr': args.learning_rate})
@@ -188,6 +248,8 @@ def main(args):
         
         metrics_log = []
         best_criterion = float('inf') if args.save_metric == 'val_loss' else -float('inf')
+        stop_mode = 'min' if args.early_stopping_metric == 'val_loss' else 'max'
+        early_stopper = EarlyStopping(mode=stop_mode, patience=args.early_stopping_patience)
         epoch = 0
 
         print('START TRAINING EPOCHS')
@@ -202,31 +264,46 @@ def main(args):
             val_map10_05 = compute_mAP(val_AP_per_class_dict[0.5], classes, exclude=AP10_EXCLUDED)
             val_map10_10 = compute_mAP(val_AP_per_class_dict[1.0], classes, exclude=AP10_EXCLUDED)
 
+            current_save_metric = get_metric_value(args.save_metric, val_loss, val_map10_05, val_map10_10)
+
             better = False
-            if args.save_metric == 'val_loss':
-                if val_loss < best_criterion:
-                    best_criterion = val_loss
-                    better = True
-            elif args.save_metric == 'map10_1':
-                if val_map10_10 > best_criterion:
-                    best_criterion = val_map10_10
-                    better = True
-            elif args.save_metric == 'map10_0.5':
-                if val_map10_05 > best_criterion:
-                    best_criterion = val_map10_05
-                    better = True
+            if is_better(args.save_metric, current_save_metric, best_criterion):
+                best_criterion = current_save_metric
+                better = True
+
+            current_stop_metric = get_metric_value(args.early_stopping_metric, val_loss, val_map10_05, val_map10_10)
+            _, should_stop = early_stopper.update(current_stop_metric)
             
+            #Printing info epoch
             print('[Epoch {}] Train loss: {:0.5f} Val loss: {:0.5f} | Val mAP10@0.5: {:0.5f} | Val mAP10@1.0: {:0.5f}'.format(
                 epoch, train_loss, val_loss, val_map10_05, val_map10_10))
             if better:
                 print(f'New best model epoch based on {args.save_metric}!')
 
-            metrics_log.append({
-                'epoch': epoch, 
-                'train_loss': train_loss, 
+            metrics_item = {
+                'epoch': epoch,
+                'train_loss': train_loss,
                 'val_loss': val_loss,
+                'val_map12_0.5': float(val_mAP_dict[0.5]),
+                'val_map12_1.0': float(val_mAP_dict[1.0]),
                 'val_map10_0.5': val_map10_05,
-                'val_map10_1.0': val_map10_10
+                'val_map10_1.0': val_map10_10,
+                'save_metric_value': current_save_metric,
+                'early_stopping_metric_value': current_stop_metric
+            }
+            metrics_log.append(metrics_item)
+
+            wandb_logger.log_epoch({
+                'epoch': epoch,
+                'train_loss': train_loss,
+                'val_loss': val_loss,
+                'val_map12_0.5': float(val_mAP_dict[0.5]),
+                'val_map12_1.0': float(val_mAP_dict[1.0]),
+                'val_map10_0.5': val_map10_05,
+                'val_map10_1.0': val_map10_10,
+                'save_metric_value': current_save_metric,
+                'early_stopping_metric_value': current_stop_metric,
+                'lr': optimizer.param_groups[0]['lr']
             })
 
             if args.save_dir is not None:
@@ -235,7 +312,11 @@ def main(args):
                 plot_metrics(metrics_log, args.save_dir, args.model)
 
                 if better:
-                    torch.save( model.state_dict(), os.path.join(ckpt_dir, 'checkpoint_best.pt') )
+                    torch.save(model.state_dict(), os.path.join(ckpt_dir, 'checkpoint_best.pt'))
+
+            if should_stop:
+                print('Early stopping triggered on {} with patience={}.'.format(args.early_stopping_metric, args.early_stopping_patience))
+                break
 
     print('START INFERENCE')
     model.load(torch.load(os.path.join(ckpt_dir, 'checkpoint_best.pt')))
@@ -292,8 +373,18 @@ def main(args):
     avg_headers = ["Metric"] + [f"mAP @ {delta}s" for delta in tolerances]
     print(tabulate(avg_table, avg_headers, tablefmt="grid"))
     print("(*) excluded from mAP10")
+
+    wandb_summary = {
+        'num_params': num_params,
+    }
+    for delta in tolerances:
+        wandb_summary[f'test_map12_{delta}'] = float(mAP_dict[delta])
+        wandb_summary[f'test_map10_{delta}'] = float(map10_dict[delta])
+    wandb_logger.log_final(wandb_summary)
     
     print('CORRECTLY FINISHED TRAINING AND INFERENCE')
+
+    wandb_logger.finish()
 
 if __name__ == '__main__':
     main(args)

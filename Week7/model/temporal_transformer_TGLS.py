@@ -1,5 +1,5 @@
 """
-File containing the main model.
+File containing the temporal transformer model.
 """
 
 #Standard imports
@@ -14,31 +14,6 @@ import torch.nn.functional as F
 #Local imports
 from model.modules import BaseRGBModel, FCLayers, create_backbone, step
 
-class ResidualBiGRU(nn.Module):
-    """
-    RNN block using a Bidirectional GRU with Transformer-style
-    Layer Normalization and Residual connections.
-    """
-    def __init__(self, dim, num_layers=2, dropout=0.3):
-        super().__init__()
-        
-        self.gru = nn.GRU(
-            input_size=dim,
-            hidden_size=dim // 2,
-            num_layers=num_layers,
-            batch_first=True,
-            bidirectional=True,
-            dropout=dropout if num_layers > 1 else 0.0
-        )
-        self.norm = nn.LayerNorm(dim)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        # x shape: (B, T, D)
-        residual = x
-        out, _ = self.gru(x)
-        out = self.dropout(out)
-        return self.norm(residual + out)
 
 class Model(BaseRGBModel):
 
@@ -50,8 +25,20 @@ class Model(BaseRGBModel):
 
             self._features, self._d = create_backbone(args)
 
-            # Temporal modelling via Residual BiGRU
-            self._temporal = ResidualBiGRU(dim=self._d, num_layers=2, dropout=0.3)
+            # Temporal modelling via Transformer encoder
+            self._pos_embed = nn.Parameter(torch.randn(1, args.clip_len, self._d) * 0.02)
+            transformer_layers = int(getattr(args, 'transformer_layers', 3))
+            transformer_dropout = float(getattr(args, 'transformer_dropout', 0.25))
+            transformer_nhead = int(getattr(args, 'transformer_nhead', 8))
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=self._d,
+                nhead=transformer_nhead,
+                dim_feedforward=self._d * 2,
+                dropout=transformer_dropout,
+                batch_first=True,
+                norm_first=True,
+            )
+            self._temporal = nn.TransformerEncoder(encoder_layer, num_layers=transformer_layers)
 
             # MLP for classification
             self._fc = FCLayers(self._d, args.num_classes+1) # +1 for background class (we now perform per-frame classification with softmax, therefore we have the extra background class)
@@ -79,22 +66,23 @@ class Model(BaseRGBModel):
                 x = self.augment(x) #augmentation per-batch
 
             x = self.standarize(x) #standarization imagenet stats
-                        
+
             im_feat = self._features(
                 x.view(-1, channels, height, width)
             ).reshape(batch_size, clip_len, self._d) #B, T, D
 
             # Temporal modelling
+            im_feat = im_feat + self._pos_embed
             im_feat = self._temporal(im_feat) #B, T, D
 
             #MLP
             im_feat = self._fc(im_feat) #B, T, num_classes+1
 
-            return im_feat 
-        
+            return im_feat
+
         def normalize(self, x):
             return x / 255.
-        
+
         def augment(self, x):
             for i in range(x.shape[0]):
                 x[i] = self.augmentation(x[i])
@@ -135,12 +123,12 @@ class Model(BaseRGBModel):
         window_size = int(getattr(self._args, 'label_smoothing_window', 5))
         sigma = float(getattr(self._args, 'label_smoothing_sigma', 0.55))
         C = self._num_classes
-        
+
         # 1D Gaussian kernel
         x_coords = torch.arange(-window_size // 2 + 1., window_size // 2 + 1., device=self.device)
         gauss = torch.exp(-x_coords**2 / (2 * sigma**2))
         gauss = gauss / gauss.sum()
-        
+
         # Reshape for depthwise 1D convolution
         kernel = gauss.view(1, 1, window_size).repeat(C, 1, 1)
         padding = window_size // 2
@@ -158,13 +146,13 @@ class Model(BaseRGBModel):
                 # ------ TEMPORAL LABEL SMOOTHING ------
                 # 1. Convert integer labels to one-hot: (B, T, C+1)
                 y_one_hot = F.one_hot(label, num_classes=C + 1).float()
-                
+
                 # 2. Extract active classes and permute for conv1d: (B, C, T)
                 y_active = y_one_hot[:, :, 1:].permute(0, 2, 1)
 
                 # 3. Apply depthwise 1D convolution to smooth active classes temporally
                 y_active_smooth = F.conv1d(y_active, kernel, padding=padding, groups=C)
-                
+
                 # Prevent numerical overflow in edge cases (e.g., overlapping events)
                 y_active_smooth = torch.clamp(y_active_smooth, min=0.0, max=1.0)
 
@@ -179,36 +167,10 @@ class Model(BaseRGBModel):
                 y_smooth = y_smooth.permute(0, 2, 1).reshape(-1, C + 1)
                 # --------------------------------------
 
-                # --- DEBUG PRINT CHECK ---
-                # if batch_idx == 0:
-                #     print("\n" + "="*50)
-                #     print(" TEMPORAL SMOOTHING DEBUG CHECK (First sequence)")
-                #     print("="*50)
-                    
-                #     # Reshape back to (B, T, C+1) to look at the first sample
-                #     # frame.shape[1] is clip_len (T)
-                #     T = frame.shape[1]
-                #     sample_smooth = y_smooth.view(-1, T, C + 1)[0].cpu().numpy()
-                #     sample_raw = label[0].cpu().numpy()
-                    
-                #     # Print frame by frame (limit to first 15 frames to keep the console clean)
-                #     print(f"Showing first {min(15, T)} frames:")
-                #     print(f"{'Frame':<7} | {'Raw Label':<10} | {'Smoothed Probabilities (Bg, C1, C2...)':<40}")
-                #     print("-" * 75)
-                    
-                #     for t in range(min(15, T)):
-                #         probs_str = ", ".join([f"{p:.3f}" for p in sample_smooth[t]])
-                #         # Add a little marker '*' if an active event is happening
-                #         marker = " *" if sample_raw[t] > 0 else ""
-                #         print(f"  {t:02d}{marker:<4} | Class {sample_raw[t]:<4} | [{probs_str}]")
-                        
-                #     print("="*50 + "\n")
-                # -------------------------
-
                 with torch.cuda.amp.autocast():
                     pred = self._model(frame)
                     pred = pred.view(-1, self._num_classes + 1) # B*T, num_classes + 1
-                    
+
                     # Compute cross entropy using the soft labels
                     # PyTorch handles target probabilities automatically if shapes match
                     loss = F.cross_entropy(
@@ -239,6 +201,5 @@ class Model(BaseRGBModel):
 
             # apply sigmoid
             pred = torch.softmax(pred, dim=-1)
-            
+
             return pred.cpu().numpy()
-        
