@@ -10,6 +10,8 @@ import sys
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, required=True)
+    parser.add_argument('--run_name', type=str, default=None,
+                        help='Custom run name for W&B and output directory. Defaults to --model.')
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
     parser.add_argument('--save_metric', type=str, default='map10_1', 
@@ -43,7 +45,7 @@ from dataset.datasets import get_datasets
 
 AP10_EXCLUDED = {'FREE KICK', 'GOAL'}
 SUPPORTED_METRICS = {'val_loss', 'map10_1', 'map10_0.5'}
-SUPPORTED_MODEL_MODULES = {'residual_bigru_TGLS', 'temporal_transformer_TGLS', 'unet', 'unet_ale', 'unet_transposed'}
+SUPPORTED_MODEL_MODULES = {'residual_bigru_TGLS', 'temporal_transformer_TGLS', 'unet', 'unet_ale', 'unet_transposed', 'non_residual_bigru_TGLS'}
 
 def compute_mAP(ap_score, classes, exclude=None):
     excluded = set() if exclude is None else set(exclude)
@@ -57,8 +59,10 @@ def compute_mAP(ap_score, classes, exclude=None):
 def update_args(args, config):
     #Update arguments with config file
     args.model_module = config.get('model_module', 'residual_bigru_TGLS')
+    cfg_run_name = config.get('run_name')
+    args.run_name = args.run_name if args.run_name else (cfg_run_name if cfg_run_name else args.model)
     args.frame_dir = config['frame_dir']
-    args.save_dir = config['save_dir'] + '/' + args.model # + '-' + str(args.seed) -> in case multiple seeds
+    args.save_dir = config['save_dir'] + '/' + args.run_name # + '-' + str(args.seed) -> in case multiple seeds
     args.store_dir = config['save_dir'] + '/' + "splits"
     args.labels_dir = config['labels_dir']
     args.store_mode = config['store_mode']
@@ -81,6 +85,9 @@ def update_args(args, config):
     args.transformer_layers = config.get('transformer_layers', 3)
     args.transformer_dropout = config.get('transformer_dropout', 0.25)
     args.transformer_nhead = config.get('transformer_nhead', 8)
+    args.gru_num_layers = config.get('gru_num_layers', 2)
+    args.gru_dropout = config.get('gru_dropout', 0.3)
+    args.gru_residual = config.get('gru_residual', True)
     args.label_smoothing_window = config.get('label_smoothing_window', 5)
     args.label_smoothing_sigma = config.get('label_smoothing_sigma', 0.55)
     args.save_metric = config.get('save_metric', args.save_metric)
