@@ -26,7 +26,7 @@
     "label_smoothing_window": 5,
     "label_smoothing_sigma": 0.55,
     "save_metric": "val_loss",
-    "early_stopping_metric": "map10_0.5",
+    "early_stopping_metric": "map10_1",
     "early_stopping_patience": 5,
 
     "wandb_project": "mcv-c6-week7-spotting",
