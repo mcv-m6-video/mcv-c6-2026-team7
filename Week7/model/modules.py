@@ -4,71 +4,12 @@ File containing the different modules related to the model: T-DEED.
 
 #Standard imports
 import abc
-from typing import Tuple
 
-import timm
 import torch
 import torch.nn as nn
 
 #Local imports
-
-_REGNET_BACKBONES = {
-    'rny002': 'regnety_002',
-    'rny004': 'regnety_004',
-    'rny008': 'regnety_008',
-}
-
-_CONVNEXT_BACKBONES = {
-    'convnextv2_pico': 'convnextv2_pico.fcmae_ft_in1k',
-    'convnextv2_atto': 'convnextv2_atto.fcmae_ft_in1k',
-}
-
-
-def available_backbones():
-    return sorted(list(_REGNET_BACKBONES.keys()) + list(_CONVNEXT_BACKBONES.keys()))
-
-
-def _use_pretrained_backbone(args) -> bool:
-    return bool(getattr(args, 'backbone_pretrained', True))
-
-
-def _freeze_backbone(args) -> bool:
-    return bool(getattr(args, 'freeze_backbone', False))
-
-
-def create_backbone(args) -> Tuple[nn.Module, int]:
-    """Build a configured backbone and return the feature extractor with output dimension."""
-    backbone_name = getattr(args, 'feature_arch', None)
-    if backbone_name is None:
-        raise ValueError('Missing required config key: feature_arch')
-
-    if backbone_name in _REGNET_BACKBONES:
-        features = timm.create_model(
-            _REGNET_BACKBONES[backbone_name],
-            pretrained=_use_pretrained_backbone(args),
-        )
-        feat_dim = features.head.fc.in_features
-        features.head.fc = nn.Identity()
-    elif backbone_name in _CONVNEXT_BACKBONES:
-        features = timm.create_model(
-            _CONVNEXT_BACKBONES[backbone_name],
-            pretrained=_use_pretrained_backbone(args),
-            num_classes=0,
-        )
-        feat_dim = features.num_features
-    else:
-        raise NotImplementedError(
-            'Unsupported backbone "{}". Available: {}'.format(
-                backbone_name,
-                ', '.join(available_backbones()),
-            )
-        )
-
-    if _freeze_backbone(args):
-        for param in features.parameters():
-            param.requires_grad = False
-
-    return features, feat_dim
+from model.backbones import available_backbones, create_backbone
 
 class ABCModel:
 
@@ -93,6 +34,8 @@ class ABCModel:
         raise NotImplementedError()
 
 class BaseRGBModel(ABCModel):
+    _model: nn.Module
+    device: str
 
     def get_optimizer(self, opt_args):
         return torch.optim.AdamW(self._get_params(), **opt_args), \

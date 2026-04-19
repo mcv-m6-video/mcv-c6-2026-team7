@@ -29,9 +29,11 @@ class WandbLogger:
         project = config.get('wandb_project', 'mcv-c6-week7-spotting')
         entity = config.get('wandb_entity')
         mode = config.get('wandb_mode', 'online')
+        run_name = getattr(args, 'run_name', None) or args.model
 
         run_config = {
             'model_name': args.model,
+            'run_name': run_name,
             'save_metric': args.save_metric,
         }
 
@@ -44,7 +46,7 @@ class WandbLogger:
         init_kwargs = {
             'project': project,
             'mode': mode,
-            'name': args.model,
+            'name': run_name,
             'config': run_config,
         }
         if entity is not None:

@@ -60,16 +60,14 @@ class Model(BaseRGBModel):
 
         def forward(self, x):
             x = self.normalize(x) #Normalize to 0-1
-            batch_size, clip_len, channels, height, width = x.shape #B, T, C, H, W
+            batch_size, clip_len = x.shape[0], x.shape[1] #B, T
 
             if self.training:
                 x = self.augment(x) #augmentation per-batch
 
             x = self.standarize(x) #standarization imagenet stats
 
-            im_feat = self._features(
-                x.view(-1, channels, height, width)
-            ).reshape(batch_size, clip_len, self._d) #B, T, D
+            im_feat = self._features(x) #B, T, D
 
             # Temporal modelling
             im_feat = im_feat + self._pos_embed
