@@ -5,14 +5,13 @@ File containing the main model.
 #Standard imports
 import torch
 from torch import nn
-import timm
 import torchvision.transforms as T
 from contextlib import nullcontext
 from tqdm import tqdm
 import torch.nn.functional as F
 
 #Local imports
-from model.modules import BaseRGBModel, FCLayers, step
+from model.modules import BaseRGBModel, FCLayers, create_backbone, step
 
 class TemporalUNet(nn.Module):
     def __init__(self, channels, hidden_channels=256, out_channels=128):
@@ -72,24 +71,10 @@ class Model(BaseRGBModel):
 
         def __init__(self, args = None):
             super().__init__()
+            if args is None:
+                raise ValueError('Model.Impl requires args')
             self._feature_arch = args.feature_arch
-
-            if self._feature_arch.startswith(('rny002', 'rny004', 'rny008')):
-                features = timm.create_model({
-                    'rny002': 'regnety_002',
-                    'rny004': 'regnety_004',
-                    'rny008': 'regnety_008',
-                }[self._feature_arch.rsplit('_', 1)[0]], pretrained=True)
-                feat_dim = features.head.fc.in_features
-
-                # Remove final classification layer
-                features.head.fc = nn.Identity()
-                self._d = feat_dim
-
-            else:
-                raise NotImplementedError(args._feature_arch)
-
-            self._features = features
+            self._features, self._d = create_backbone(args)
 
             # Temporal U-Net
             self.unet_hidden = 256
@@ -120,16 +105,13 @@ class Model(BaseRGBModel):
 
         def forward(self, x):
             x = self.normalize(x) #Normalize to 0-1
-            batch_size, clip_len, channels, height, width = x.shape #B, T, C, H, W
 
             if self.training:
                 x = self.augment(x) #augmentation per-batch
 
             x = self.standarize(x) #standarization imagenet stats
-                        
-            im_feat = self._features(
-                x.view(-1, channels, height, width)
-            ).reshape(batch_size, clip_len, self._d) #B, T, D
+
+            im_feat = self._features(x) #B, T, D
 
             # Temporal Processing
             im_feat = im_feat.permute(0, 2, 1) # Permute to (B, D, T) for Conv1D
@@ -159,8 +141,11 @@ class Model(BaseRGBModel):
                 sum(p.numel() for p in self.parameters()))
 
     def __init__(self, args=None):
+        if args is None:
+            raise ValueError('Model requires args')
+
         self.device = "cpu"
-        if torch.cuda.is_available() and ("device" in args) and (args.device == "cuda"):
+        if torch.cuda.is_available() and getattr(args, 'device', 'cpu') == "cuda":
             self.device = "cuda"
 
         self._model = Model.Impl(args=args)
@@ -191,7 +176,7 @@ class Model(BaseRGBModel):
 
                 with torch.cuda.amp.autocast():
                     pred = self._model(frame)
-                    pred = pred.view(-1, self._num_classes + 1) # B*T, num_classes
+                    pred = pred.view(-1, self._num_classes + 1) # B*T, num_classes + 1
                     label = label.view(-1) # B*T
                     loss = F.cross_entropy(
                             pred, label, reduction='mean', weight = weights)
