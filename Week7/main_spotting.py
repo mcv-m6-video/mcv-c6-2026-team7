@@ -12,7 +12,7 @@ def get_args():
     parser.add_argument('--model', type=str, required=True)
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
-    parser.add_argument('--save_metric', type=str, default='val_loss', 
+    parser.add_argument('--save_metric', type=str, default='map10_1', 
                         choices=['val_loss', 'map10_1', 'map10_0.5'], 
                         help='Metric used to save the best checkpoint')
     return parser.parse_args()
@@ -43,7 +43,7 @@ from dataset.datasets import get_datasets
 
 AP10_EXCLUDED = {'FREE KICK', 'GOAL'}
 SUPPORTED_METRICS = {'val_loss', 'map10_1', 'map10_0.5'}
-SUPPORTED_MODEL_MODULES = {'residual_bigru_TGLS', 'temporal_transformer_TGLS'}
+SUPPORTED_MODEL_MODULES = {'residual_bigru_TGLS', 'temporal_transformer_TGLS', 'unet', 'unet_ale', 'unet_transposed'}
 
 def compute_mAP(ap_score, classes, exclude=None):
     excluded = set() if exclude is None else set(exclude)
@@ -84,8 +84,12 @@ def update_args(args, config):
     args.label_smoothing_window = config.get('label_smoothing_window', 5)
     args.label_smoothing_sigma = config.get('label_smoothing_sigma', 0.55)
     args.save_metric = config.get('save_metric', args.save_metric)
-    args.early_stopping_metric = config.get('early_stopping_metric', 'val_loss')
+    args.early_stopping_metric = config.get('early_stopping_metric', 'map10_1')
     args.early_stopping_patience = config.get('early_stopping_patience', 5)
+    args.unet_dropout = config.get('unet_dropout', 0.0)
+    args.label_smoothing = config.get('label_smoothing', 'none')
+    args.label_smo_window = config.get('label_smo_window', 5)
+    args.LS_gaussian_sigma = config.get('LS_gaussian_sigma', 0.55)
 
     return args
 
