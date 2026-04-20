@@ -45,7 +45,7 @@ from dataset.datasets import get_datasets
 
 AP10_EXCLUDED = {'FREE KICK', 'GOAL'}
 SUPPORTED_METRICS = {'val_loss', 'map10_1', 'map10_0.5'}
-SUPPORTED_MODEL_MODULES = {'residual_bigru_TGLS', 'temporal_transformer_TGLS', 'unet', 'unet_ale', 'unet_transposed', 'non_residual_bigru_TGLS'}
+SUPPORTED_MODEL_MODULES = {'residual_bigru_TGLS', 'temporal_transformer_TGLS', 'unet_se', 'unet_dilated', 'unet_dilated_bigger', 'unet_baseline', 'non_residual_bigru_TGLS', 'unet_ablation'}
 
 def compute_mAP(ap_score, classes, exclude=None):
     excluded = set() if exclude is None else set(exclude)
@@ -97,6 +97,8 @@ def update_args(args, config):
     args.label_smoothing = config.get('label_smoothing', 'none')
     args.label_smo_window = config.get('label_smo_window', 5)
     args.LS_gaussian_sigma = config.get('LS_gaussian_sigma', 0.55)
+    args.use_dilated = config.get('use_dilated', False)
+    args.use_se = config.get('use_se', False)
 
     return args
 
