@@ -1,6 +1,6 @@
 {
-    "model_module": "unet_se",
-    "frame_dir": "./data/frames/398x224",
+    "model_module": "unet_dilated_bigger",
+     "frame_dir": "./data/frames/398x224",
     "save_dir": "./results",
     "labels_dir": "./data/soccernetball/spotting-ball-2025/",
     "store_mode": "load",
