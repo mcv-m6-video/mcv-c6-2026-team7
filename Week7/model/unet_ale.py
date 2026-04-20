@@ -181,6 +181,7 @@ class Model(BaseRGBModel):
         self._num_classes = args.num_classes
         self.label_smoothing = args.label_smoothing
         self.label_smo_window = args.label_smo_window
+        self.LS_gaussian_sigma = args.LS_gaussian_sigma
 
     def epoch(self, loader, optimizer=None, scaler=None, lr_scheduler=None):
 
@@ -200,7 +201,7 @@ class Model(BaseRGBModel):
         x_coords = torch.arange(-half_w, half_w + 1., device=self.device)
         
         if self.label_smoothing == 'gaussian':
-            sigma = 0.55
+            sigma = self.LS_gaussian_sigma
             # Gaussian peak: [0.135, 0.606, 1.0, 0.606, 0.135]
             base_kernel = torch.exp(-x_coords**2 / (2 * sigma**2))
             
