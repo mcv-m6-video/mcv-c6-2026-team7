@@ -99,6 +99,7 @@ def update_args(args, config):
     args.LS_gaussian_sigma = config.get('LS_gaussian_sigma', 0.55)
     args.use_dilated = config.get('use_dilated', False)
     args.use_se = config.get('use_se', False)
+    args.pool_type = config.get('pool_type', 'max')
 
     return args
 
