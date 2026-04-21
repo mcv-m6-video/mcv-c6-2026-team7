@@ -13,14 +13,13 @@ Combines:
 # Standard imports
 import torch
 from torch import nn
-import timm
 import torchvision.transforms as T
 from contextlib import nullcontext
 from tqdm import tqdm
 import torch.nn.functional as F
 
 # Local imports
-from model.modules import BaseRGBModel, FCLayers, step
+from model.modules import BaseRGBModel, FCLayers, create_backbone, step
 from model.pooling import make_pool, ConcatPool1d, POOL_TYPES
 
 
@@ -124,6 +123,7 @@ class TemporalUNet(nn.Module):
         use_se: bool = False,
         se_reduction: int = 16,
         pool_type: str = "max",
+        use_temporal_bottleneck: bool = True,
     ):
         super().__init__()
 
@@ -135,10 +135,11 @@ class TemporalUNet(nn.Module):
         self.use_dilated = use_dilated
         self.use_se      = use_se
         self.pool_type   = pool_type
+        self.use_temporal_bottleneck = use_temporal_bottleneck
         self.dropout     = nn.Dropout1d(p=dropout_p)
 
-        # ConcatPool doubles channels; halve base width to compensate.
-        is_concat = pool_type == "concat"
+        # ConcatPool doubles channels only when temporal downsampling is active.
+        is_concat = (pool_type == "concat") and use_temporal_bottleneck
         h = hidden_channels // 2 if is_concat else hidden_channels
 
         # Channel multiplier introduced by each pooling step
@@ -166,11 +167,17 @@ class TemporalUNet(nn.Module):
         self.enc2 = enc_conv(h * m,       h * 2, dilation=2 if use_dilated else 1)
         self.enc3 = enc_conv(h * 2 * m,   h * 4, dilation=4 if use_dilated else 1)
 
-        # Pools act on the *output* of the preceding enc conv.
-        # BlurPool needs the channel count at that point.
-        self.pool1 = make_pool(pool_type, channels=h,     kernel_size=2)
-        self.pool2 = make_pool(pool_type, channels=h * 2, kernel_size=2)
-        self.pool3 = make_pool(pool_type, channels=h * 4, kernel_size=2)
+        if use_temporal_bottleneck:
+            # Pools act on the output of the preceding encoder conv.
+            # BlurPool needs the channel count at that point.
+            self.pool1 = make_pool(pool_type, channels=h,     kernel_size=2)
+            self.pool2 = make_pool(pool_type, channels=h * 2, kernel_size=2)
+            self.pool3 = make_pool(pool_type, channels=h * 4, kernel_size=2)
+        else:
+            # Keep temporal resolution fixed across the full temporal U-Net.
+            self.pool1 = nn.Identity()
+            self.pool2 = nn.Identity()
+            self.pool3 = nn.Identity()
 
         # ── Bottleneck ───────────────────────────────────────────────────
         btn_in = h * 4 * m   # = pool3 output channels
@@ -249,19 +256,7 @@ class Model(BaseRGBModel):
             self._feature_arch = args.feature_arch
             self.unet_dropout  = args.unet_dropout
 
-            if self._feature_arch.startswith(('rny002', 'rny004', 'rny008')):
-                features = timm.create_model({
-                    'rny002': 'regnety_002',
-                    'rny004': 'regnety_004',
-                    'rny008': 'regnety_008',
-                }[self._feature_arch.rsplit('_', 1)[0]], pretrained=True)
-                feat_dim = features.head.fc.in_features
-                features.head.fc = nn.Identity()
-                self._d = feat_dim
-            else:
-                raise NotImplementedError(args.feature_arch)
-
-            self._features = features
+            self._features, self._d = create_backbone(args)
 
             # ── Temporal U-Net ────────────────────────────────────────────
             self.unet_hidden  = 256
@@ -279,6 +274,7 @@ class Model(BaseRGBModel):
                 use_se=getattr(args, 'use_se', False),
                 se_reduction=getattr(args, 'se_reduction', 16),
                 pool_type=pool_type,
+                use_temporal_bottleneck=getattr(args, 'use_temporal_bottleneck', True),
             )
 
             # ── Classification head ───────────────────────────────────────
@@ -303,16 +299,13 @@ class Model(BaseRGBModel):
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
             x = self.normalize(x)                                   # → [0, 1]
-            batch_size, clip_len, channels, height, width = x.shape
 
             if self.training:
                 x = self.augment(x)
 
             x = self.standarize(x)
 
-            im_feat = self._features(
-                x.view(-1, channels, height, width)
-            ).reshape(batch_size, clip_len, self._d)                # (B, T, D)
+            im_feat = self._features(x)                              # (B, T, D)
 
             # Temporal processing
             im_feat = im_feat.permute(0, 2, 1)                      # (B, D, T)

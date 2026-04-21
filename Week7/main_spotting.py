@@ -100,6 +100,7 @@ def update_args(args, config):
     args.use_dilated = config.get('use_dilated', False)
     args.use_se = config.get('use_se', False)
     args.pool_type = config.get('pool_type', 'max')
+    args.use_temporal_bottleneck = config.get('use_temporal_bottleneck', True)
 
     return args
 
