@@ -1,25 +1,28 @@
-# Week 6 - Video Analysis (C6) - Team 7
+# Week 7 - Video Analysis (C6) - Team 7
 
 **Team members:** Marc Aguilar · Oriol Marín · Pol Rosinés · Biel González · Alejandro Donaire
 
 ## Overview
 
-This week we experiment with different **video action spotting** approaches using **SoccerNet** data. The goal is to improve upon a given baseline model.
+This week we experiment with different **video action spotting** approaches using **SoccerNet** data. The goal is to improve upon a given baseline model. In particular, this week we are explicitly asked to perform temporal aggregation at some point in the architecture.
 
 ## Best Approach
 
 Our best-performing model combines:
 
-- RegNetY-004
-- Residual Bidirectional GRU
+- X3D Backbone
+- Temporal U-Net, with modifications:
+    - Dropout
+    - Dilated convolutions
+    - Squeeze and excitation blocks
 - Temporal Gaussian Label Smoothing
 
 **Model checkpoint:** [Download from Google Drive](https://drive.google.com/file/d/17UPYPjJMmW6grPxKw_5uHFWEyes_Font/view?usp=drive_link)
 
 ## Usage
 
-All code is inside the `Week6/` folder. In particular, to reproduce the best model use:
+All code is inside the `Week7/` folder. In particular, to reproduce the best model use:
 
 - The main file `main_spotting.py`
-- The model file `residual_bigru_TGLS.py`.
-- The config file `residual_bigru_TGLS.json`.
+- The model file `unet_ablation.py`.
+- The config file `config_final.json`.
