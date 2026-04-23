@@ -2,6 +2,9 @@
 
 **Team members:** Marc Aguilar · Oriol Marín · Pol Rosinés · Biel González · Alejandro Donaire
 
+## Slides
+The presentation slides are available in [Google Slides](https://docs.google.com/presentation/d/1dX51hq7ZbdBtsOfERDI_usZvNYEfWUeEeKxJrPh7XDU/edit?usp=sharing) and as a [PDF file](Project%202%20presentation%20-%20Team%207.pdf).
+
 ## Overview
 
 This week we experiment with different **video action spotting** approaches using **SoccerNet** data. The goal is to improve upon a given baseline model. In particular, this week we are explicitly asked to perform temporal aggregation at some point in the architecture.
