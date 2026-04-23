@@ -17,7 +17,7 @@ Our best-performing model combines:
     - Squeeze and excitation blocks
 - Temporal Gaussian Label Smoothing
 
-**Model checkpoint:** [Download from Google Drive](https://drive.google.com/file/d/17UPYPjJMmW6grPxKw_5uHFWEyes_Font/view?usp=drive_link)
+**Model checkpoint:** [Download from Google Drive](https://drive.google.com/file/d/1348nX-FxoGLIIWT7PL80JxIQ5gflc5sL/view?usp=drive_link)
 
 ## Usage
 
